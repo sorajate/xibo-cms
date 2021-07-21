@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -21,15 +21,9 @@
  */
 namespace Xibo\Controller;
 
-use baseDAO;
-use database;
 use Slim\Http\Response as Response;
 use Slim\Http\ServerRequest as Request;
-use Slim\Views\Twig;
 use Xibo\Factory\LayoutFactory;
-use Xibo\Helper\SanitizerService;
-use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
 use Xibo\Support\Exception\AccessDeniedException;
 
 /**
@@ -45,19 +39,10 @@ class Preview extends Base
 
     /**
      * Set common dependencies.
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
-     * @param \Xibo\Helper\ApplicationState $state
-     * @param \Xibo\Entity\User $user
-     * @param \Xibo\Service\HelpServiceInterface $help
-     * @param ConfigServiceInterface $config
      * @param LayoutFactory $layoutFactory
-     * @param Twig $view
      */
-    public function __construct($log, $sanitizerService, $state, $user, $help, $config, $layoutFactory, Twig $view)
+    public function __construct($layoutFactory)
     {
-        $this->setCommonDependencies($log, $sanitizerService, $state, $user, $help, $config, $view);
-
         $this->layoutFactory = $layoutFactory;
     }
 
@@ -117,17 +102,24 @@ class Preview extends Base
      * @throws \Xibo\Support\Exception\InvalidArgumentException
      * @throws \Xibo\Support\Exception\NotFoundException
      */
-    function getXlf(Request $request, Response $response, $id )
+    public function getXlf(Request $request, Response $response, $id)
     {
-        $layout = $this->layoutFactory->getById($id);
+        $layout = $this->layoutFactory->concurrentRequestLock($this->layoutFactory->getById($id));
 
         if (!$this->getUser()->checkViewable($layout)) {
             throw new AccessDeniedException();
         }
 
-        echo file_get_contents($layout->xlfToDisk());
+        echo file_get_contents($layout->xlfToDisk([
+            'notify' => false,
+            'collectNow' => false,
+        ]));
 
         $this->setNoOutput(true);
+
+        // Release lock
+        $this->layoutFactory->concurrentRequestRelease($layout);
+
         return $this->render($request, $response);
     }
 }

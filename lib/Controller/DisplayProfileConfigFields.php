@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -248,6 +248,16 @@ trait DisplayProfileConfigFields
                 if ($sanitizedParams->hasParam('isRecordGeoLocationOnProofOfPlay')) {
                     $this->handleChangedSettings('isRecordGeoLocationOnProofOfPlay', ($ownConfig) ? $displayProfile->getSetting('isRecordGeoLocationOnProofOfPlay') : $display->getSetting('isRecordGeoLocationOnProofOfPlay'), $sanitizedParams->getCheckbox('isRecordGeoLocationOnProofOfPlay'), $changedSettings);
                     $displayProfile->setSetting('isRecordGeoLocationOnProofOfPlay', $sanitizedParams->getCheckbox('isRecordGeoLocationOnProofOfPlay'), $ownConfig, $config);
+                }
+
+                if ($sanitizedParams->hasParam('videoEngine')) {
+                    $this->handleChangedSettings('videoEngine', ($ownConfig) ? $displayProfile->getSetting('videoEngine') : $display->getSetting('videoEngine'), $sanitizedParams->getString('videoEngine'), $changedSettings);
+                    $displayProfile->setSetting('videoEngine', $sanitizedParams->getString('videoEngine'), $ownConfig, $config);
+                }
+
+                if ($sanitizedParams->hasParam('isTouchEnabled')) {
+                    $this->handleChangedSettings('isTouchEnabled', ($ownConfig) ? $displayProfile->getSetting('isTouchEnabled') : $display->getSetting('isTouchEnabled'), $sanitizedParams->getCheckbox('isTouchEnabled'), $changedSettings);
+                    $displayProfile->setSetting('isTouchEnabled', $sanitizedParams->getCheckbox('isTouchEnabled'), $ownConfig, $config);
                 }
 
                 break;

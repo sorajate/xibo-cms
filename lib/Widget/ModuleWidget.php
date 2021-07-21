@@ -25,7 +25,6 @@ use Carbon\Carbon;
 use GuzzleHttp\Psr7\Stream;
 use Intervention\Image\ImageManagerStatic as Img;
 use Mimey\MimeTypes;
-use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseInterface;
 use Slim\Http\Response as Response;
 use Slim\Http\ServerRequest as Request;
@@ -33,6 +32,7 @@ use Slim\Views\Twig;
 use Stash\Interfaces\PoolInterface;
 use Stash\Invalidation;
 use Stash\Item;
+use Symfony\Component\EventDispatcher\EventDispatcher;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Twig\Error\Error;
 use Xibo\Entity\Media;
@@ -42,9 +42,9 @@ use Xibo\Factory\CommandFactory;
 use Xibo\Factory\DataSetColumnFactory;
 use Xibo\Factory\DataSetFactory;
 use Xibo\Factory\DisplayFactory;
-use Xibo\Factory\DisplayGroupFactory;
-use Xibo\Factory\LayoutFactory;
 use Xibo\Factory\MediaFactory;
+use Xibo\Factory\MenuBoardCategoryFactory;
+use Xibo\Factory\MenuBoardFactory;
 use Xibo\Factory\ModuleFactory;
 use Xibo\Factory\PermissionFactory;
 use Xibo\Factory\PlayerVersionFactory;
@@ -52,7 +52,6 @@ use Xibo\Factory\PlaylistFactory;
 use Xibo\Factory\ScheduleFactory;
 use Xibo\Factory\TransitionFactory;
 use Xibo\Factory\UserGroupFactory;
-use Xibo\Factory\WidgetFactory;
 use Xibo\Helper\DateFormatHelper;
 use Xibo\Helper\HttpCacheProvider;
 use Xibo\Helper\SanitizerService;
@@ -193,15 +192,6 @@ abstract class ModuleWidget implements ModuleInterface
      */
     protected $commandFactory;
 
-    /** @var  LayoutFactory */
-    protected $layoutFactory;
-
-    /** @var  WidgetFactory */
-    protected $widgetFactory;
-
-    /** @var  DisplayGroupFactory */
-    protected $displayGroupFactory;
-
     /** @var  ScheduleFactory */
     protected $scheduleFactory;
 
@@ -217,11 +207,17 @@ abstract class ModuleWidget implements ModuleInterface
     /** @var PlaylistFactory */
     protected $playlistFactory;
 
+    /** @var MenuBoardFactory */
+    protected $menuBoardFactory;
+
+    /** @var MenuBoardCategoryFactory */
+    protected $menuBoardCategoryFactory;
+
     /** @var Twig */
     protected $view;
 
-    /** @var ContainerInterface */
-    protected $container;
+    /** @var HttpCacheProvider */
+    protected $cacheProvider;
 
     // </editor-fold>
 
@@ -232,7 +228,6 @@ abstract class ModuleWidget implements ModuleInterface
      * @param LogServiceInterface $log
      * @param ConfigServiceInterface $config
      * @param SanitizerService $sanitizer
-     * @param EventDispatcherInterface $dispatcher
      * @param ModuleFactory $moduleFactory
      * @param MediaFactory $mediaFactory
      * @param DataSetFactory $dataSetFactory
@@ -244,17 +239,18 @@ abstract class ModuleWidget implements ModuleInterface
      * @param PermissionFactory $permissionFactory
      * @param UserGroupFactory $userGroupFactory
      * @param PlaylistFactory $playlistFactory
+     * @param MenuBoardFactory $menuBoardFactory
+     * @param MenuBoardCategoryFactory $menuBoardCategoryFactory
      * @param Twig $view
-     * @param ContainerInterface $container
+     * @param HttpCacheProvider $cacheProvider
      */
-    public function __construct($store, $pool, $log, $config, $sanitizer, $dispatcher, $moduleFactory, $mediaFactory, $dataSetFactory, $dataSetColumnFactory, $transitionFactory, $displayFactory, $commandFactory, $scheduleFactory, $permissionFactory, $userGroupFactory, $playlistFactory, Twig $view, ContainerInterface $container)
+    public function __construct($store, $pool, $log, $config, $sanitizer, $moduleFactory, $mediaFactory, $dataSetFactory, $dataSetColumnFactory, $transitionFactory, $displayFactory, $commandFactory, $scheduleFactory, $permissionFactory, $userGroupFactory, $playlistFactory, $menuBoardFactory, $menuBoardCategoryFactory, Twig $view, HttpCacheProvider $cacheProvider)
     {
         $this->store = $store;
         $this->pool = $pool;
         $this->logService = $log;
         $this->configService = $config;
         $this->sanitizerService = $sanitizer;
-        $this->dispatcher = $dispatcher;
 
         $this->moduleFactory = $moduleFactory;
         $this->mediaFactory = $mediaFactory;
@@ -267,25 +263,12 @@ abstract class ModuleWidget implements ModuleInterface
         $this->permissionFactory = $permissionFactory;
         $this->userGroupFactory = $userGroupFactory;
         $this->playlistFactory = $playlistFactory;
+        $this->menuBoardFactory = $menuBoardFactory;
+        $this->menuBoardCategoryFactory = $menuBoardCategoryFactory;
         $this->view = $view;
-        $this->container = $container;
+        $this->cacheProvider = $cacheProvider;
 
         $this->init();
-    }
-
-    /**
-     * Set Child Object Dependencies
-     * @param LayoutFactory $layoutFactory
-     * @param WidgetFactory $widgetFactory
-     * @param DisplayGroupFactory $displayGroupFactory
-     * @return $this
-     */
-    public function setChildObjectDependencies($layoutFactory, $widgetFactory, $displayGroupFactory)
-    {
-        $this->layoutFactory = $layoutFactory;
-        $this->widgetFactory = $widgetFactory;
-        $this->displayGroupFactory = $displayGroupFactory;
-        return $this;
     }
 
     /**
@@ -351,10 +334,22 @@ abstract class ModuleWidget implements ModuleInterface
     }
 
     /**
-     * @inheritdoc
+     * @return SanitizerService
      */
-    protected function getDispatcher()
+    protected function getSanitizerService()
     {
+        return $this->sanitizerService;
+    }
+
+    /**
+     * @return EventDispatcher
+     */
+    public function getDispatcher(): EventDispatcher
+    {
+        if ($this->dispatcher === null) {
+            $this->dispatcher = new EventDispatcher();
+        }
+
         return $this->dispatcher;
     }
 
@@ -460,6 +455,11 @@ abstract class ModuleWidget implements ModuleInterface
         // Check if duration has a positive value
         if ($duration < 0) {
             throw new InvalidArgumentException(__('Duration needs to be a positive value'), 'duration');
+        }
+
+        // Set maximum duration
+        if ($duration > 526000) {
+            throw new InvalidArgumentException(__('Duration must be lower than 526000'), 'duration');
         }
 
         $this->widget->duration = $duration;
@@ -741,7 +741,7 @@ abstract class ModuleWidget implements ModuleInterface
             $this->getLog()->debug('Dispatching save event ' . $this->saveEvent->getName());
 
             // Dispatch the Edit Event
-            $this->dispatcher->dispatch($this->saveEvent->getName(), $this->saveEvent);
+            $this->getDispatcher()->dispatch($this->saveEvent->getName(), $this->saveEvent);
         }
 
         $this->widget->calculateDuration($this)->save();
@@ -1117,11 +1117,9 @@ abstract class ModuleWidget implements ModuleInterface
      * @return \Xibo\Entity\Media
      * @throws NotFoundException
      */
-    public function getMedia()
+    public function getMedia(): Media
     {
-        $media = $this->mediaFactory->getById($this->getMediaId());
-        $media->setChildObjectDependencies($this->layoutFactory, $this->widgetFactory, $this->displayGroupFactory, $this->displayFactory, $this->scheduleFactory, $this->playerVersionFactory);
-        return $media;
+        return $this->mediaFactory->getById($this->getMediaId());
     }
 
     /**
@@ -1160,8 +1158,7 @@ abstract class ModuleWidget implements ModuleInterface
             // Get the name with library
             $attachmentName = $sanitizedParams->getString('attachment', ['default' => (($attachment == null) ? $media->storedAs : $attachment)]);
 
-            /** @var $httpCache HttpCacheProvider*/
-            $httpCache = $this->container->get('httpCache');
+            $httpCache = $this->cacheProvider;
             // Issue some headers
             $response = $httpCache->withEtag($response, $media->md5);
             $response = $httpCache->withExpires($response,'+1 week');
@@ -1254,9 +1251,10 @@ abstract class ModuleWidget implements ModuleInterface
     /**
      * Get templatesAvailable
      * @param bool $loadImage Should the image URL be loaded?
+     * @param null $folder Optional path to templates for custom Modules
      * @return array
      */
-    public function templatesAvailable($loadImage = true)
+    public function templatesAvailable($loadImage = true, $folder = null)
     {
         if ($this->moduleTemplates === null) {
             $this->moduleTemplates = [];
@@ -1266,6 +1264,11 @@ abstract class ModuleWidget implements ModuleInterface
 
             // Scan the custom folder for template files.
             $this->scanFolderForTemplates(PROJECT_ROOT . '/custom/' . $this->module->type . '/*.template.json', $loadImage);
+
+            // Scan the custom folder for template files.
+            if ($folder != null) {
+                $this->scanFolderForTemplates($folder, $loadImage);
+            }
         }
 
         return $this->moduleTemplates;

@@ -46,8 +46,9 @@ $playlist-editor-unsuccess-message-bg-color: $xibo-color-red;
         color: $playlist-editor-main-fb-color;
     }
 
-    .editor-modal-header .editor-modal-close i {
-        color: $xibo-color-red;
+    &.stretchedBar {
+        margin-left: 140px;
+        width: calc(100% - 120px);
     }
 }
 

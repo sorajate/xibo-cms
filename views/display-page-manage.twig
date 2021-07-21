@@ -194,8 +194,8 @@
                         <div class="XiboFilter">
                             <div class="FilterDiv card-body" id="bandwidthFilter">
                                 <form class="form-inline">
-                                    {{ inline.date("fromDt", "From Date", defaults.fromDate, "", "", "", "") }}
-                                    {{ inline.date("toDt", "To Date", defaults.toDate, "", "", "", "") }}
+                                    {{ inline.dateMonth("fromDt", "From Date", defaults.fromDate, "", "", "", "") }}
+                                    {{ inline.dateMonth("toDt", "To Date", defaults.toDate, "", "", "", "") }}
                                     {{ inline.hidden("displayId", display.displayId) }}
                                 </form>
                             </div>
@@ -217,6 +217,7 @@
         $(document).ready(function() {
             var table = $("#logs").DataTable({
                 "language": dataTablesLanguage,
+                dom: dataTablesTemplate,
                 serverSide: true, stateSave: true, stateDuration: 0,
                 filter: false,
                 responsive: true,

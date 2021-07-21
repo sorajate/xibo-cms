@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -26,9 +26,7 @@ namespace Xibo\Factory;
 
 use Xibo\Entity\User;
 use Xibo\Entity\Widget;
-use Xibo\Helper\SanitizerService;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
+use Xibo\Service\DisplayNotifyServiceInterface;
 use Xibo\Support\Exception\NotFoundException;
 
 /**
@@ -56,35 +54,31 @@ class WidgetFactory extends BaseFactory
      */
     private $permissionFactory;
 
-    /** @var  DisplayFactory */
-    private $displayFactory;
+    /** @var DisplayNotifyServiceInterface */
+    private $displayNotifyService;
 
     /** @var ActionFactory */
     private $actionFactory;
 
     /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param User $user
      * @param UserFactory $userFactory
      * @param WidgetOptionFactory $widgetOptionFactory
      * @param WidgetMediaFactory $widgetMediaFactory
      * @param WidgetAudioFactory $widgetAudioFactory
      * @param PermissionFactory $permissionFactory
-     * @param DisplayFactory $displayFactory
+     * @param DisplayNotifyServiceInterface $displayNotifyService
      * @param ActionFactory $actionFactory
      */
-    public function __construct($store, $log, $sanitizerService, $user, $userFactory, $widgetOptionFactory, $widgetMediaFactory, $widgetAudioFactory, $permissionFactory, $displayFactory, $actionFactory)
+    public function __construct($user, $userFactory, $widgetOptionFactory, $widgetMediaFactory, $widgetAudioFactory, $permissionFactory, $displayNotifyService, $actionFactory)
     {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
         $this->setAclDependencies($user, $userFactory);
         $this->widgetOptionFactory = $widgetOptionFactory;
         $this->widgetMediaFactory = $widgetMediaFactory;
         $this->widgetAudioFactory = $widgetAudioFactory;
         $this->permissionFactory = $permissionFactory;
-        $this->displayFactory = $displayFactory;
+        $this->displayNotifyService = $displayNotifyService;
         $this->actionFactory = $actionFactory;
     }
 
@@ -101,7 +95,7 @@ class WidgetFactory extends BaseFactory
             $this->widgetMediaFactory,
             $this->widgetAudioFactory,
             $this->permissionFactory,
-            $this->displayFactory,
+            $this->displayNotifyService,
             $this->actionFactory
         );
     }
@@ -304,9 +298,6 @@ class WidgetFactory extends BaseFactory
             $body .= ' AND playlist.regionId IS NULL ';
         }
 
-        // Permissions
-        $this->viewPermissionSql('Xibo\Entity\Widget', $body, $params, 'widget.widgetId', 'widget.ownerId', $filterBy, 'playlist.permissionsFolderId');
-
         if ($sanitizedFilter->getInt('playlistId') !== null) {
             $body .= ' AND `widget`.playlistId = :playlistId';
             $params['playlistId'] = $sanitizedFilter->getInt('playlistId');
@@ -366,6 +357,9 @@ class WidgetFactory extends BaseFactory
             $terms = explode(',', $sanitizedFilter->getString('playlist'));
             $this->nameFilter('playlist', 'name', $terms, $body, $params, ($sanitizedFilter->getCheckbox('useRegexForName') == 1));
         }
+
+        // Permissions
+        $this->viewPermissionSql('Xibo\Entity\Widget', $body, $params, 'widget.widgetId', 'widget.ownerId', $filterBy, 'playlist.permissionsFolderId');
 
         // Sorting?
         $order = '';

@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -25,9 +25,6 @@ namespace Xibo\Factory;
 
 use Xibo\Entity\DisplayGroup;
 use Xibo\Entity\User;
-use Xibo\Helper\SanitizerService;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
 use Xibo\Support\Exception\NotFoundException;
 
 /**
@@ -48,17 +45,13 @@ class DisplayGroupFactory extends BaseFactory
 
     /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param User $user
      * @param UserFactory $userFactory
      * @param PermissionFactory $permissionFactory
      * @param TagFactory $tagFactory
      */
-    public function __construct($store, $log, $sanitizerService, $user, $userFactory, $permissionFactory, $tagFactory)
+    public function __construct($user, $userFactory, $permissionFactory, $tagFactory)
     {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
         $this->setAclDependencies($user, $userFactory);
 
         $this->permissionFactory = $permissionFactory;
@@ -329,8 +322,11 @@ class DisplayGroupFactory extends BaseFactory
 
         $body .= ' WHERE 1 = 1 ';
 
-        // View Permissions
-        $this->viewPermissionSql('Xibo\Entity\DisplayGroup', $body, $params, '`displaygroup`.displayGroupId', '`displaygroup`.userId', $filterBy, '`displaygroup`.permissionsFolderId');
+        // Always include Display specific Display Groups for DOOH.
+        if ($parsedBody->getInt('disableUserCheck') == 0 && ($this->getUser()->userTypeId == 4 || ($this->getUser()->isSuperAdmin() && $this->getUser()->showContentFrom == 2))) {
+            $body .= ' OR `displaygroup`.isDisplaySpecific = 1 ';
+        }
+
         if ($parsedBody->getInt('displayGroupId') !== null) {
             $body .= ' AND displaygroup.displayGroupId = :displayGroupId ';
             $params['displayGroupId'] = $parsedBody->getInt('displayGroupId');
@@ -439,6 +435,9 @@ class DisplayGroupFactory extends BaseFactory
             $params['folderId'] = $parsedBody->getInt('folderId');
         }
 
+        // View Permissions
+        $this->viewPermissionSql('Xibo\Entity\DisplayGroup', $body, $params, '`displaygroup`.displayGroupId', '`displaygroup`.userId', $filterBy, '`displaygroup`.permissionsFolderId');
+
         // Sorting?
         $order = '';
 
@@ -471,7 +470,13 @@ class DisplayGroupFactory extends BaseFactory
         $sql = $select . $body . $order . $limit;
 
         foreach ($this->getStore()->select($sql, $params) as $row) {
-            $entries[] = $this->createEmpty()->hydrate($row, ['intProperties' => ['isDisplaySpecific', 'isDynamic']]);
+            $displayGroup = $this->createEmpty()->hydrate($row, ['intProperties' => ['isDisplaySpecific', 'isDynamic']]);
+            $displayGroup->excludeProperty('displays');
+            $displayGroup->excludeProperty('media');
+            $displayGroup->excludeProperty('events');
+            $displayGroup->excludeProperty('layouts');
+
+            $entries[] = $displayGroup;
         }
 
         // Paging

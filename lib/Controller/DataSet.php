@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -24,15 +24,12 @@ namespace Xibo\Controller;
 use Carbon\Carbon;
 use Slim\Http\Response as Response;
 use Slim\Http\ServerRequest as Request;
-use Slim\Views\Twig;
 use Xibo\Factory\DataSetColumnFactory;
 use Xibo\Factory\DataSetFactory;
 use Xibo\Factory\FolderFactory;
 use Xibo\Helper\DataSetUploadHandler;
 use Xibo\Helper\DateFormatHelper;
-use Xibo\Helper\SanitizerService;
-use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
+use Xibo\Service\MediaService;
 use Xibo\Support\Exception\AccessDeniedException;
 use Xibo\Support\Exception\GeneralException;
 use Xibo\Support\Exception\InvalidArgumentException;
@@ -58,22 +55,13 @@ class DataSet extends Base
 
     /**
      * Set common dependencies.
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
-     * @param \Xibo\Helper\ApplicationState $state
-     * @param \Xibo\Entity\User $user
-     * @param \Xibo\Service\HelpServiceInterface $help
-     * @param ConfigServiceInterface $config
      * @param DataSetFactory $dataSetFactory
      * @param DataSetColumnFactory $dataSetColumnFactory
-     * @param Twig $view
      * @param \Xibo\Factory\UserFactory $userFactory
      * @param FolderFactory $folderFactory
      */
-    public function __construct($log, $sanitizerService, $state, $user, $help, $config, $dataSetFactory, $dataSetColumnFactory, Twig $view, $userFactory, $folderFactory)
+    public function __construct($dataSetFactory, $dataSetColumnFactory, $userFactory, $folderFactory)
     {
-        $this->setCommonDependencies($log, $sanitizerService, $state, $user, $help, $config, $view);
-
         $this->dataSetFactory = $dataSetFactory;
         $this->dataSetColumnFactory = $dataSetColumnFactory;
         $this->userFactory = $userFactory;
@@ -292,6 +280,7 @@ class DataSet extends Base
                         'id' => 'dataset_button_permissions',
                         'url' => $this->urlFor($request,'user.permissions.form', ['entity' => 'DataSet', 'id' => $dataSet->dataSetId]),
                         'text' => __('Share'),
+                        'multi-select' => true,
                         'dataAttributes' => [
                             ['name' => 'commit-url', 'value' => $this->urlFor($request,'user.permissions.multi', ['entity' => 'DataSet', 'id' => $dataSet->dataSetId])],
                             ['name' => 'commit-method', 'value' => 'post'],
@@ -422,6 +411,13 @@ class DataSet extends Base
      *      required=false
      *   ),
      *  @SWG\Parameter(
+     *      name="userAgent",
+     *      in="formData",
+     *      description="Custom user Agent value",
+     *      type="string",
+     *      required=false
+     *   ),
+     *  @SWG\Parameter(
      *      name="refreshRate",
      *      in="formData",
      *      description="How often in seconds should this remote DataSet be refreshed",
@@ -546,6 +542,7 @@ class DataSet extends Base
             $dataSet->username = $sanitizedParams->getString('username');
             $dataSet->password = $sanitizedParams->getString('password');
             $dataSet->customHeaders = $sanitizedParams->getString('customHeaders');
+            $dataSet->userAgent = $sanitizedParams->getString('userAgent');
             $dataSet->refreshRate = $sanitizedParams->getInt('refreshRate');
             $dataSet->clearRate = $sanitizedParams->getInt('clearRate');
             $dataSet->runsAfter = $sanitizedParams->getInt('runsAfter');
@@ -718,6 +715,13 @@ class DataSet extends Base
      *      required=false
      *   ),
      *  @SWG\Parameter(
+     *      name="userAgent",
+     *      in="formData",
+     *      description="Custom user Agent value",
+     *      type="string",
+     *      required=false
+     *   ),
+     *  @SWG\Parameter(
      *      name="refreshRate",
      *      in="formData",
      *      description="How often in seconds should this remote DataSet be refreshed",
@@ -829,6 +833,7 @@ class DataSet extends Base
             $dataSet->username = $sanitizedParams->getString('username');
             $dataSet->password = $sanitizedParams->getString('password');
             $dataSet->customHeaders = $sanitizedParams->getString('customHeaders');
+            $dataSet->userAgent = $sanitizedParams->getString('userAgent');
             $dataSet->refreshRate = $sanitizedParams->getInt('refreshRate');
             $dataSet->clearRate = $sanitizedParams->getInt('clearRate');
             $dataSet->runsAfter = $sanitizedParams->getInt('runsAfter');
@@ -1132,7 +1137,7 @@ class DataSet extends Base
         $libraryFolder = $this->getConfig()->getSetting('LIBRARY_LOCATION');
 
         // Make sure the library exists
-        Library::ensureLibraryExists($this->getConfig()->getSetting('LIBRARY_LOCATION'));
+        MediaService::ensureLibraryExists($this->getConfig()->getSetting('LIBRARY_LOCATION'));
 
         $sanitizer = $this->getSanitizer($request->getParams());
 
@@ -1215,13 +1220,12 @@ class DataSet extends Base
     public function importJson(Request $request, Response $response, $id)
     {
         $dataSet = $this->dataSetFactory->getById($id);
-        $sanitizedParams = $this->getSanitizer($request->getParams());
 
         if (!$this->getUser()->checkEditable($dataSet)) {
             throw new AccessDeniedException();
         }
 
-        $body = $request->getParsedBody();
+        $body = json_encode($request->getParsedBody());
 
         if (empty($body)) {
             throw new InvalidArgumentException(__('Missing JSON Body'));
@@ -1255,34 +1259,38 @@ class DataSet extends Base
         // Parse and validate each data row we've been provided
         foreach ($data['rows'] as $row) {
             // Parse each property
-            $sanitizedRow = null;
+            $sanitizedRow = $this->getSanitizer($row);
+            $rowToAdd = null;
             foreach ($row as $key => $value) {
                 // Does the property in the provided row exist as a column?
                 if (isset($columns[$key])) {
                     // Sanitize accordingly
                     if ($columns[$key] == 2) {
                         // Number
-                        $value = $sanitizedParams->getDouble($value);
-                    }
-                    else if ($columns[$key] == 3) {
+                        $value = $sanitizedRow->getDouble($key);
+                    } elseif ($columns[$key] == 3) {
                         // Date
-                        $value = Carbon::createFromTimeString($value)->format(DateFormatHelper::getSystemFormat());
-                    }
-                    else if ($columns[$key] == 5) {
+                        try {
+                            $date = $sanitizedRow->getDate($key);
+                            $value = $date->format(DateFormatHelper::getSystemFormat());
+                        } catch (\Exception $e) {
+                            $this->getLog()->error(sprintf('Incorrect date provided %s, expected date format Y-m-d H:i:s ', $value));
+                            throw new InvalidArgumentException(sprintf(__('Incorrect date provided %s, expected date format Y-m-d H:i:s '), $value), 'date');
+                        }
+                    } elseif ($columns[$key] == 5) {
                         // Media Id
-                        $value = $sanitizedParams->getInt($value);
-                    }
-                    else {
+                        $value = $sanitizedRow->getInt($key);
+                    } else {
                         // String
-                        $value = $sanitizedParams->getString($value);
+                        $value = $sanitizedRow->getString($key);
                     }
 
                     // Data is sanitized, add to the sanitized row
-                    $sanitizedRow[$key] = $value;
+                    $rowToAdd[$key] = $value;
                 }
             }
 
-            if (count($sanitizedRow) > 0) {
+            if (count($rowToAdd) > 0) {
                 $takenSomeAction = true;
 
                 // Check unique keys to see if this is an update
@@ -1291,8 +1299,8 @@ class DataSet extends Base
                     // Build a filter to select existing records
                     $filter = '';
                     foreach ($data['uniqueKeys'] as $uniqueKey) {
-                        if (isset($sanitizedRow[$uniqueKey])) {
-                            $filter .= 'AND `' . $uniqueKey . '` = \'' . $sanitizedRow[$uniqueKey] . '\' ';
+                        if (isset($rowToAdd[$uniqueKey])) {
+                            $filter .= 'AND `' . $uniqueKey . '` = \'' . $rowToAdd[$uniqueKey] . '\' ';
                         }
                     }
                     $filter = trim($filter, 'AND');
@@ -1302,15 +1310,15 @@ class DataSet extends Base
 
                     if (count($existingRows) > 0) {
                         foreach ($existingRows as $existingRow) {
-                            $dataSet->editRow($existingRow['id'], array_merge($existingRow, $sanitizedRow));
+                            $dataSet->editRow($existingRow['id'], array_merge($existingRow, $rowToAdd));
                         }
                     }
                     else {
-                        $dataSet->addRow($sanitizedRow);
+                        $dataSet->addRow($rowToAdd);
                     }
 
                 } else {
-                    $dataSet->addRow($sanitizedRow);
+                    $dataSet->addRow($rowToAdd);
                 }
             }
         }

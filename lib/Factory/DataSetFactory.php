@@ -31,10 +31,8 @@ use Xibo\Entity\DataSet;
 use Xibo\Entity\DataSetColumn;
 use Xibo\Helper\DateFormatHelper;
 use Xibo\Helper\Environment;
-use Xibo\Helper\SanitizerService;
 use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
+use Xibo\Service\DisplayNotifyServiceInterface;
 use Xibo\Support\Exception\InvalidArgumentException;
 use Xibo\Support\Exception\NotFoundException;
 
@@ -56,34 +54,27 @@ class DataSetFactory extends BaseFactory
     /** @var  PermissionFactory */
     private $permissionFactory;
 
-    /** @var  DisplayFactory */
-    private $displayFactory;
-
-    private $sanitizerService;
+    /** @var DisplayNotifyServiceInterface */
+    private $displayNotifyService;
 
     /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param \Xibo\Entity\User $user
      * @param UserFactory $userFactory
      * @param ConfigServiceInterface $config
      * @param PoolInterface $pool
      * @param DataSetColumnFactory $dataSetColumnFactory
      * @param PermissionFactory $permissionFactory
-     * @param DisplayFactory $displayFactory
+     * @param DisplayNotifyServiceInterface $displayNotifyService
      */
-    public function __construct($store, $log, $sanitizerService, $user, $userFactory, $config, $pool, $dataSetColumnFactory, $permissionFactory, $displayFactory)
+    public function __construct($user, $userFactory, $config, $pool, $dataSetColumnFactory, $permissionFactory, $displayNotifyService)
     {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
         $this->setAclDependencies($user, $userFactory);
         $this->config = $config;
         $this->pool = $pool;
         $this->dataSetColumnFactory = $dataSetColumnFactory;
         $this->permissionFactory = $permissionFactory;
-        $this->displayFactory = $displayFactory;
-        $this->sanitizerService = $sanitizerService;
+        $this->displayNotifyService = $displayNotifyService;
     }
 
     /**
@@ -102,13 +93,13 @@ class DataSetFactory extends BaseFactory
         return new DataSet(
             $this->getStore(),
             $this->getLog(),
-            $this->sanitizerService,
+            $this->getSanitizerService(),
             $this->config,
             $this->pool,
             $this,
             $this->dataSetColumnFactory,
             $this->permissionFactory,
-            $this->displayFactory
+            $this->displayNotifyService
         );
     }
 
@@ -205,6 +196,7 @@ class DataSetFactory extends BaseFactory
             dataset.`username`,
             dataset.`password`,
             dataset.`customHeaders`,
+            dataset.`userAgent`,
             dataset.`refreshRate`,
             dataset.`clearRate`,
             dataset.`runsAfter`,
@@ -240,9 +232,6 @@ class DataSetFactory extends BaseFactory
              WHERE 1 = 1
         ';
 
-        // View Permissions
-        $this->viewPermissionSql('Xibo\Entity\DataSet', $body, $params, '`dataset`.dataSetId', '`dataset`.userId', $filterBy, '`dataset`.permissionsFolderId');
-
         if ($parsedFilter->getInt('dataSetId') !== null) {
             $body .= ' AND dataset.dataSetId = :dataSetId ';
             $params['dataSetId'] = $parsedFilter->getInt('dataSetId');
@@ -277,6 +266,9 @@ class DataSetFactory extends BaseFactory
             $body .= ' AND dataset.folderId = :folderId ';
             $params['folderId'] = $parsedFilter->getInt('folderId');
         }
+
+        // View Permissions
+        $this->viewPermissionSql('Xibo\Entity\DataSet', $body, $params, '`dataset`.dataSetId', '`dataset`.userId', $filterBy, '`dataset`.permissionsFolderId');
 
         // Sorting?
         $order = '';
@@ -389,6 +381,10 @@ class DataSetFactory extends BaseFactory
                 parse_str(parse_url($resolvedUri, PHP_URL_QUERY), $queryParamsArray);
                 parse_str($this->replaceParams($dataSet->postData, $options), $dataSetPostData);
                 $requestParams['query'] = array_merge($queryParamsArray, $dataSetPostData);
+            }
+
+            if (!empty($dataSet->userAgent)) {
+                $requestParams['headers']['User-Agent'] = trim($dataSet->userAgent);
             }
 
             $this->getLog()->debug('Making request to ' . $resolvedUri . ' with params: ' . var_export($requestParams, true));

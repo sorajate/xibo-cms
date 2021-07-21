@@ -24,10 +24,7 @@ namespace Xibo\Factory;
 
 use Xibo\Entity\SavedReport;
 use Xibo\Entity\User;
-use Xibo\Helper\SanitizerService;
 use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
 use Xibo\Support\Exception\NotFoundException;
 
 /**
@@ -48,17 +45,13 @@ class SavedReportFactory extends BaseFactory
 
     /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param User $user
      * @param UserFactory $userFactory
      * @param ConfigServiceInterface $config
      * @param MediaFactory $mediaFactory
      */
-    public function __construct($store, $log, $sanitizerService, $user, $userFactory, $config, $mediaFactory)
+    public function __construct($user, $userFactory, $config, $mediaFactory)
     {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
         $this->setAclDependencies($user, $userFactory);
 
         $this->config = $config;
@@ -157,9 +150,6 @@ class SavedReportFactory extends BaseFactory
 
         $body .= " WHERE 1 = 1 ";
 
-        // View Permissions
-        $this->viewPermissionSql('Xibo\Entity\SavedReport', $body, $params, '`saved_report`.savedReportId', '`saved_report`.userId', $filterBy);
-
         // Like
         if ($sanitizedFilter->getString('saveAs') != '') {
             $terms = explode(',', $sanitizedFilter->getString('saveAs'));
@@ -214,6 +204,9 @@ class SavedReportFactory extends BaseFactory
             $body .= ' AND `saved_report`.userId = :currentUserId ';
             $params['currentUserId'] = $this->getUser()->userId;
         }
+
+        // View Permissions
+        $this->viewPermissionSql('Xibo\Entity\SavedReport', $body, $params, '`saved_report`.savedReportId', '`saved_report`.userId', $filterBy);
 
         // Sorting?
         $order = '';

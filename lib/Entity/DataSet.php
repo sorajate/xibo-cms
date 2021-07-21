@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -29,9 +29,10 @@ use Respect\Validation\Validator as v;
 use Stash\Interfaces\PoolInterface;
 use Xibo\Factory\DataSetColumnFactory;
 use Xibo\Factory\DataSetFactory;
-use Xibo\Factory\DisplayFactory;
 use Xibo\Factory\PermissionFactory;
+use Xibo\Helper\SanitizerService;
 use Xibo\Service\ConfigServiceInterface;
+use Xibo\Service\DisplayNotifyServiceInterface;
 use Xibo\Service\LogServiceInterface;
 use Xibo\Storage\StorageServiceInterface;
 use Xibo\Support\Exception\ConfigurationException;
@@ -153,6 +154,12 @@ class DataSet implements \JsonSerializable
     public $customHeaders;
 
     /**
+     * @SWG\Property(description="Custom User agent")
+     * @var string
+     */
+    public $userAgent;
+
+    /**
      * @SWG\Property(description="Time in seconds this DataSet should fetch new Datas from the remote host")
      * @var int
      */
@@ -267,22 +274,22 @@ class DataSet implements \JsonSerializable
     /** @var  PermissionFactory */
     private $permissionFactory;
 
-    /** @var  DisplayFactory */
-    private $displayFactory;
+    /** @var DisplayNotifyServiceInterface */
+    private $displayNotifyService;
 
     /**
      * Entity constructor.
      * @param StorageServiceInterface $store
      * @param LogServiceInterface $log
-     * @param $sanitizerService
+     * @param SanitizerService $sanitizerService
      * @param ConfigServiceInterface $config
      * @param PoolInterface $pool
      * @param DataSetFactory $dataSetFactory
      * @param DataSetColumnFactory $dataSetColumnFactory
      * @param PermissionFactory $permissionFactory
-     * @param DisplayFactory $displayFactory
+     * @param DisplayNotifyServiceInterface $displayNotifyService
      */
-    public function __construct($store, $log, $sanitizerService, $config, $pool, $dataSetFactory, $dataSetColumnFactory, $permissionFactory, $displayFactory)
+    public function __construct($store, $log, $sanitizerService, $config, $pool, $dataSetFactory, $dataSetColumnFactory, $permissionFactory, $displayNotifyService)
     {
         $this->setCommonDependencies($store, $log);
         $this->sanitizerService = $sanitizerService;
@@ -291,7 +298,7 @@ class DataSet implements \JsonSerializable
         $this->dataSetFactory = $dataSetFactory;
         $this->dataSetColumnFactory = $dataSetColumnFactory;
         $this->permissionFactory = $permissionFactory;
-        $this->displayFactory = $displayFactory;
+        $this->displayNotifyService = $displayNotifyService;
     }
 
     /**
@@ -350,6 +357,15 @@ class DataSet implements \JsonSerializable
     public function countLast()
     {
         return $this->countLast;
+    }
+
+    /**
+     * Get the Display Notify Service
+     * @return DisplayNotifyServiceInterface
+     */
+    public function getDisplayNotifyService(): DisplayNotifyServiceInterface
+    {
+        return $this->displayNotifyService->init();
     }
 
     /**
@@ -919,8 +935,9 @@ class DataSet implements \JsonSerializable
     public function deleteData()
     {
         // The last thing we do is drop the dataSet table
-        $this->getStore()->isolated('TRUNCATE TABLE `dataset_' . $this->dataSetId . '`', []);
-        $this->getStore()->isolated('ALTER TABLE `dataset_' . $this->dataSetId . '` AUTO_INCREMENT = 1', []);
+        $this->getStore()->update('TRUNCATE TABLE `dataset_' . $this->dataSetId . '`', []);
+        $this->getStore()->update('ALTER TABLE `dataset_' . $this->dataSetId . '` AUTO_INCREMENT = 1', []);
+        $this->getStore()->commitIfNecessary();
     }
 
     /**
@@ -946,8 +963,8 @@ class DataSet implements \JsonSerializable
 
         // Insert the extra columns we expect for a remote DataSet
         if ($this->isRemote === 1) {
-            $columns .= ', `method`, `uri`, `postData`, `authentication`, `username`, `password`, `customHeaders`, `refreshRate`, `clearRate`, `runsAfter`, `dataRoot`, `lastSync`, `summarize`, `summarizeField`, `sourceId`, `ignoreFirstRow`, `rowLimit`, `limitPolicy`';
-            $values .= ', :method, :uri, :postData, :authentication, :username, :password, :customHeaders, :refreshRate, :clearRate, :runsAfter, :dataRoot, :lastSync, :summarize, :summarizeField, :sourceId, :ignoreFirstRow, :rowLimit, :limitPolicy';
+            $columns .= ', `method`, `uri`, `postData`, `authentication`, `username`, `password`, `customHeaders`, `userAgent`, `refreshRate`, `clearRate`, `runsAfter`, `dataRoot`, `lastSync`, `summarize`, `summarizeField`, `sourceId`, `ignoreFirstRow`, `rowLimit`, `limitPolicy`';
+            $values .= ', :method, :uri, :postData, :authentication, :username, :password, :customHeaders, :userAgent, :refreshRate, :clearRate, :runsAfter, :dataRoot, :lastSync, :summarize, :summarizeField, :sourceId, :ignoreFirstRow, :rowLimit, :limitPolicy';
 
             $params['method'] = $this->method;
             $params['uri'] = $this->uri;
@@ -956,6 +973,7 @@ class DataSet implements \JsonSerializable
             $params['username'] = $this->username;
             $params['password'] = $this->password;
             $params['customHeaders'] = $this->customHeaders;
+            $params['userAgent'] = $this->userAgent;
             $params['refreshRate'] = $this->refreshRate;
             $params['clearRate'] = $this->clearRate;
             $params['runsAfter'] = $this->runsAfter;
@@ -996,7 +1014,7 @@ class DataSet implements \JsonSerializable
         ];
 
         if ($this->isRemote) {
-            $sql .= ', method = :method, uri = :uri, postData = :postData, authentication = :authentication, `username` = :username, `password` = :password, `customHeaders` = :customHeaders, refreshRate = :refreshRate, clearRate = :clearRate, runsAfter = :runsAfter, `dataRoot` = :dataRoot, `summarize` = :summarize, `summarizeField` = :summarizeField, `sourceId` = :sourceId, `ignoreFirstRow` = :ignoreFirstRow , `rowLimit` = :rowLimit, `limitPolicy` = :limitPolicy ';
+            $sql .= ', method = :method, uri = :uri, postData = :postData, authentication = :authentication, `username` = :username, `password` = :password, `customHeaders` = :customHeaders, `userAgent` = :userAgent, refreshRate = :refreshRate, clearRate = :clearRate, runsAfter = :runsAfter, `dataRoot` = :dataRoot, `summarize` = :summarize, `summarizeField` = :summarizeField, `sourceId` = :sourceId, `ignoreFirstRow` = :ignoreFirstRow , `rowLimit` = :rowLimit, `limitPolicy` = :limitPolicy ';
 
             $params['method'] = $this->method;
             $params['uri'] = $this->uri;
@@ -1005,6 +1023,7 @@ class DataSet implements \JsonSerializable
             $params['username'] = $this->username;
             $params['password'] = $this->password;
             $params['customHeaders'] = $this->customHeaders;
+            $params['userAgent'] = $this->userAgent;
             $params['refreshRate'] = $this->refreshRate;
             $params['clearRate'] = $this->clearRate;
             $params['runsAfter'] = $this->runsAfter;
@@ -1067,7 +1086,7 @@ class DataSet implements \JsonSerializable
     {
         $this->getLog()->debug('DataSet ' . $this->dataSetId . ' wants to notify');
 
-        $this->displayFactory->getDisplayNotifyService()->collectNow()->notifyByDataSetId($this->dataSetId);
+        $this->getDisplayNotifyService()->collectNow()->notifyByDataSetId($this->dataSetId);
     }
 
     /**

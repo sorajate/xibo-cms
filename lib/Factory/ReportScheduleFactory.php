@@ -22,13 +22,8 @@
 
 namespace Xibo\Factory;
 
-use Stash\Interfaces\PoolInterface;
 use Xibo\Entity\ReportSchedule;
 use Xibo\Entity\User;
-use Xibo\Helper\SanitizerService;
-use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
 use Xibo\Support\Exception\NotFoundException;
 
 /**
@@ -38,30 +33,13 @@ use Xibo\Support\Exception\NotFoundException;
 class ReportScheduleFactory extends BaseFactory
 {
     /**
-     * @var ConfigServiceInterface
-     */
-    private $config;
-
-    /** @var PoolInterface  */
-    private $pool;
-
-    /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param User $user
      * @param UserFactory $userFactory
-     * @param ConfigServiceInterface $config
-     * @param PoolInterface $pool
      */
-    public function __construct($store, $log, $sanitizerService, $user, $userFactory, $config, $pool)
+    public function __construct($user, $userFactory)
     {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
         $this->setAclDependencies($user, $userFactory);
-
-        $this->config = $config;
-        $this->pool = $pool;
     }
 
     /**
@@ -86,8 +64,9 @@ class ReportScheduleFactory extends BaseFactory
     public function getById($reportScheduleId, $disableUserCheck = 0)
     {
 
-        if ($reportScheduleId == 0)
+        if ($reportScheduleId == 0) {
             throw new NotFoundException();
+        }
 
         $reportSchedules = $this->query(null, ['reportScheduleId' => $reportScheduleId, 'disableUserCheck' => $disableUserCheck]);
 
@@ -139,11 +118,6 @@ class ReportScheduleFactory extends BaseFactory
 
         $body .= " WHERE 1 = 1 ";
 
-        // View Permissions
-        if ($this->getUser()->userTypeId != 1) {
-            $this->viewPermissionSql('Xibo\Entity\ReportSchedule', $body, $params, '`reportschedule`.reportScheduleId', '`reportschedule`.userId', $filterBy);
-        }
-
         // Like
         if ($sanitizedFilter->getString('name') != '') {
             $terms = explode(',', $sanitizedFilter->getString('name'));
@@ -176,6 +150,11 @@ class ReportScheduleFactory extends BaseFactory
         if ($sanitizedFilter->getInt('isActive') !== null) {
             $body .= " AND reportschedule.isActive = :isActive ";
             $params['isActive'] = $sanitizedFilter->getInt('isActive');
+        }
+
+        // View Permissions
+        if ($this->getUser()->userTypeId != 1) {
+            $this->viewPermissionSql('Xibo\Entity\ReportSchedule', $body, $params, '`reportschedule`.reportScheduleId', '`reportschedule`.userId', $filterBy);
         }
 
         // Sorting?

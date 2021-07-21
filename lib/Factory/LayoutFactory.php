@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -20,12 +20,11 @@
  * along with Xibo.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 namespace Xibo\Factory;
 
-
 use Carbon\Carbon;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Stash\Invalidation;
+use Stash\Pool;
 use Xibo\Entity\DataSet;
 use Xibo\Entity\DataSetColumn;
 use Xibo\Entity\Layout;
@@ -33,10 +32,8 @@ use Xibo\Entity\Playlist;
 use Xibo\Entity\Region;
 use Xibo\Entity\User;
 use Xibo\Entity\Widget;
-use Xibo\Helper\SanitizerService;
 use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
+use Xibo\Service\MediaServiceInterface;
 use Xibo\Support\Exception\DuplicateEntityException;
 use Xibo\Support\Exception\GeneralException;
 use Xibo\Support\Exception\InvalidArgumentException;
@@ -53,8 +50,8 @@ class LayoutFactory extends BaseFactory
      */
     private $config;
 
-    /** @var  EventDispatcherInterface */
-    private $dispatcher;
+    /** @var \Stash\Interfaces\PoolInterface */
+    private $pool;
 
     /**
      * @var PermissionFactory
@@ -115,13 +112,9 @@ class LayoutFactory extends BaseFactory
 
     /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param User $user
      * @param UserFactory $userFactory
      * @param ConfigServiceInterface $config
-     * @param EventDispatcherInterface $dispatcher
      * @param PermissionFactory $permissionFactory
      * @param RegionFactory $regionFactory
      * @param TagFactory $tagFactory
@@ -134,15 +127,28 @@ class LayoutFactory extends BaseFactory
      * @param PlaylistFactory $playlistFactory
      * @param WidgetAudioFactory $widgetAudioFactory
      * @param ActionFactory $actionFactory
+     * @param FolderFactory $folderFactory
      */
-    public function __construct($store, $log, $sanitizerService, $user, $userFactory, $config, $dispatcher, $permissionFactory,
-                                $regionFactory, $tagFactory, $campaignFactory, $mediaFactory, $moduleFactory, $resolutionFactory,
-                                $widgetFactory, $widgetOptionFactory, $playlistFactory, $widgetAudioFactory, $actionFactory, $folderFactory)
-    {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
+    public function __construct(
+        $user,
+        $userFactory,
+        $config,
+        $permissionFactory,
+        $regionFactory,
+        $tagFactory,
+        $campaignFactory,
+        $mediaFactory,
+        $moduleFactory,
+        $resolutionFactory,
+        $widgetFactory,
+        $widgetOptionFactory,
+        $playlistFactory,
+        $widgetAudioFactory,
+        $actionFactory,
+        $folderFactory
+    ) {
         $this->setAclDependencies($user, $userFactory);
         $this->config = $config;
-        $this->dispatcher = $dispatcher;
         $this->permissionFactory = $permissionFactory;
         $this->regionFactory = $regionFactory;
         $this->tagFactory = $tagFactory;
@@ -168,7 +174,6 @@ class LayoutFactory extends BaseFactory
             $this->getStore(),
             $this->getLog(),
             $this->config,
-            $this->dispatcher,
             $this->permissionFactory,
             $this->regionFactory,
             $this->tagFactory,
@@ -204,6 +209,7 @@ class LayoutFactory extends BaseFactory
         $layout = $this->createEmpty();
         $layout->width = $resolution->width;
         $layout->height = $resolution->height;
+        $layout->orientation = ($layout->width >= $layout->height) ? 'landscape' : 'portrait';
 
         // Set the properties
         $layout->layout = $name;
@@ -437,6 +443,10 @@ class LayoutFactory extends BaseFactory
      */
     public function getByDisplayGroupId($displayGroupId)
     {
+        if ($displayGroupId == null) {
+            return [];
+        }
+
         return $this->query(null, ['disableUserCheck' => 1, 'displayGroupId' => $displayGroupId]);
     }
 
@@ -1046,9 +1056,10 @@ class LayoutFactory extends BaseFactory
      * @param int $importTags
      * @param bool $useExistingDataSets
      * @param bool $importDataSetData
-     * @param \Xibo\Controller\Library $libraryController
+     * @param DataSetFactory $dataSetFactory
      * @param string $tags
      * @param \Slim\Interfaces\RouteParserInterface $routeParser $routeParser
+     * @param MediaServiceInterface $mediaService
      * @return Layout
      * @throws DuplicateEntityException
      * @throws GeneralException
@@ -1056,7 +1067,7 @@ class LayoutFactory extends BaseFactory
      * @throws NotFoundException
      * @throws \Xibo\Support\Exception\ConfigurationException
      */
-    public function createFromZip($zipFile, $layoutName, $userId, $template, $replaceExisting, $importTags, $useExistingDataSets, $importDataSetData, $libraryController, $tags, $routeParser)
+    public function createFromZip($zipFile, $layoutName, $userId, $template, $replaceExisting, $importTags, $useExistingDataSets, $importDataSetData, $dataSetFactory, $tags, $routeParser, MediaServiceInterface $mediaService)
     {
         $this->getLog()->debug(sprintf('Create Layout from ZIP File: %s, imported name will be %s.', $zipFile, $layoutName));
 
@@ -1317,11 +1328,11 @@ class LayoutFactory extends BaseFactory
                     /* @var Widget $widget */
                     $audioIds = $widget->getAudioIds();
 
-                    $this->getLog()->debug('Checking Widget for the old mediaID [%d] so we can replace it with the new mediaId [%d] and storedAs [%s]. Media assigned to widget %s.', $oldMediaId, $newMediaId, $media->storedAs, json_encode($widget->mediaIds));
+                    $this->getLog()->debug(sprintf('Checking Widget for the old mediaID [%d] so we can replace it with the new mediaId [%d] and storedAs [%s]. Media assigned to widget %s.', $oldMediaId, $newMediaId, $media->storedAs, json_encode($widget->mediaIds)));
 
                     if (in_array($oldMediaId, $widget->mediaIds)) {
 
-                        $this->getLog()->debug('Removing %d and replacing with %d', $oldMediaId, $newMediaId);
+                        $this->getLog()->debug(sprintf('Removing %d and replacing with %d', $oldMediaId, $newMediaId));
 
                         // Are we an audio record?
                         if (in_array($oldMediaId, $audioIds)) {
@@ -1363,7 +1374,7 @@ class LayoutFactory extends BaseFactory
 
                         if (in_array($oldMediaId, $widget->mediaIds)) {
 
-                            $this->getLog()->debug('Playlist import Removing %d and replacing with %d', $oldMediaId, $newMediaId);
+                            $this->getLog()->debug(sprintf('Playlist import Removing %d and replacing with %d', $oldMediaId, $newMediaId));
 
                             // Are we an audio record?
                             if (in_array($oldMediaId, $audioIds)) {
@@ -1421,7 +1432,7 @@ class LayoutFactory extends BaseFactory
 
             foreach ($dataSets as $item) {
                 // Hydrate a new dataset object with this json object
-                $dataSet = $libraryController->getDataSetFactory()->createEmpty()->hydrate($item);
+                $dataSet = $dataSetFactory->createEmpty()->hydrate($item);
                 $dataSet->columns = [];
                 $dataSetId = $dataSet->dataSetId;
 
@@ -1430,8 +1441,8 @@ class LayoutFactory extends BaseFactory
                 
                 // Hydrate the columns
                 foreach ($item['columns'] as $columnItem) {
-                    $this->getLog()->debug('Assigning column: %s', json_encode($columnItem));
-                    $dataSet->assignColumn($libraryController->getDataSetFactory()->getDataSetColumnFactory()->createEmpty()->hydrate($columnItem));
+                    $this->getLog()->debug(sprintf('Assigning column: %s', json_encode($columnItem)));
+                    $dataSet->assignColumn($dataSetFactory->getDataSetColumnFactory()->createEmpty()->hydrate($columnItem));
                 }
 
                 /** @var DataSet $existingDataSet */
@@ -1443,9 +1454,9 @@ class LayoutFactory extends BaseFactory
                     if ($dataSet->code != '') {
                         try {
                             // try and get by code
-                            $existingDataSet = $libraryController->getDataSetFactory()->getByCode($dataSet->code);
+                            $existingDataSet = $dataSetFactory->getByCode($dataSet->code);
                         } catch (NotFoundException $e) {
-                            $this->getLog()->debug('Existing dataset not found with code %s', $dataSet->code);
+                            $this->getLog()->debug(sprintf('Existing dataset not found with code %s', $dataSet->code));
 
                         }
                     }
@@ -1453,16 +1464,16 @@ class LayoutFactory extends BaseFactory
                     if ($existingDataSet === null) {
                         // try by name
                         try {
-                            $existingDataSet = $libraryController->getDataSetFactory()->getByName($dataSet->dataSet);
+                            $existingDataSet = $dataSetFactory->getByName($dataSet->dataSet);
                         } catch (NotFoundException $e) {
-                            $this->getLog()->debug('Existing dataset not found with name %s', $dataSet->code);
+                            $this->getLog()->debug(sprintf('Existing dataset not found with name %s', $dataSet->code));
                         }
                     }
                 }
 
                 if ($existingDataSet === null) {
 
-                    $this->getLog()->debug('Matching DataSet not found, will need to add one. useExistingDataSets = %s', $useExistingDataSets);
+                    $this->getLog()->debug(sprintf('Matching DataSet not found, will need to add one. useExistingDataSets = %s', $useExistingDataSets));
 
                     // We want to add the dataset we have as a new dataset.
                     // we will need to make sure we clear the ID's and save it
@@ -1474,7 +1485,7 @@ class LayoutFactory extends BaseFactory
                     if ($importDataSetData) {
 
                         // Import the data here
-                        $this->getLog()->debug('Importing data into new DataSet %d', $existingDataSet->dataSetId);
+                        $this->getLog()->debug(sprintf('Importing data into new DataSet %d', $existingDataSet->dataSetId));
 
                         foreach ($item['data'] as $itemData) {
                             if (isset($itemData['id']))
@@ -1493,7 +1504,7 @@ class LayoutFactory extends BaseFactory
 
                     // Validate that the columns are the same
                     if (count($dataSet->columns) != count($existingDataSet->columns)) {
-                        $this->getLog()->debug('Columns for Imported DataSet = %s', json_encode($dataSet->columns));
+                        $this->getLog()->debug(sprintf('Columns for Imported DataSet = %s', json_encode($dataSet->columns)));
                         throw new InvalidArgumentException(sprintf(__('DataSets have different number of columns imported = %d, existing = %d'), count($dataSet->columns), count($existingDataSet->columns)));
                     }
 
@@ -1540,7 +1551,7 @@ class LayoutFactory extends BaseFactory
                                 // Get the columns option
                                 $columns = explode(',', $widget->getOptionValue('columns', ''));
 
-                                $this->getLog()->debug('Looking to replace columns from %s', json_encode($columns));
+                                $this->getLog()->debug(sprintf('Looking to replace columns from %s', json_encode($columns)));
 
                                 foreach ($existingDataSet->columns as $column) {
                                     foreach ($columns as $index => $col) {
@@ -1554,13 +1565,13 @@ class LayoutFactory extends BaseFactory
 
                                 $widget->setOptionValue('columns', 'attrib', $columns);
 
-                                $this->getLog()->debug('Replaced columns with %s', $columns);
+                                $this->getLog()->debug(sprintf('Replaced columns with %s', $columns));
 
                             } else if ($widget->type == 'datasetticker') {
                                 // Get the template option
                                 $template = $widget->getOptionValue('template', '');
 
-                                $this->getLog()->debug('Looking to replace columns from %s', $template);
+                                $this->getLog()->debug(sprintf('Looking to replace columns from %s', $template));
 
                                 foreach ($existingDataSet->columns as $column) {
                                     // We replace with the |%d] so that we dont experience double replacements
@@ -1569,12 +1580,12 @@ class LayoutFactory extends BaseFactory
 
                                 $widget->setOptionValue('template', 'cdata', $template);
 
-                                $this->getLog()->debug('Replaced columns with %s', $template);
+                                $this->getLog()->debug(sprintf('Replaced columns with %s', $template));
                             } else if ($widget->type == 'chart') {
                                 // get the config for the chart widget
                                 $oldConfig = json_decode($widget->getOptionValue('config', '[]'), true);
                                 $newConfig = [];
-                                $this->getLog()->debug('Looking to replace config from %s', json_encode($oldConfig));
+                                $this->getLog()->debug(sprintf('Looking to replace config from %s', json_encode($oldConfig)));
 
                                 // go through the chart config and our dataSet
                                 foreach ($oldConfig as $config) {
@@ -1592,7 +1603,7 @@ class LayoutFactory extends BaseFactory
                                     }
                                 }
 
-                                $this->getLog()->debug('Replaced config with %s', json_encode($newConfig));
+                                $this->getLog()->debug(sprintf('Replaced config with %s', json_encode($newConfig)));
 
                                 // json encode our newConfig and set it as config attribute in the imported chart widget.
                                 $widget->setOptionValue('config', 'attrib', json_encode($newConfig));
@@ -1625,7 +1636,7 @@ class LayoutFactory extends BaseFactory
 
         if ($fontsAdded && $routeParser != null) {
             $this->getLog()->debug('Fonts have been added');
-            $libraryController->installFonts($routeParser);
+            $mediaService->setUser($this->getUser())->installFonts($routeParser);
         }
 
         return $layout;
@@ -1820,6 +1831,7 @@ class LayoutFactory extends BaseFactory
         $select .= "        layout.enableStat, ";
         $select .= "        layout.width, ";
         $select .= "        layout.height, ";
+        $select .= '        layout.orientation, ';
         $select .= "        layout.retired, ";
         $select .= "        layout.createdDt, ";
         $select .= "        layout.modifiedDt, ";
@@ -1964,9 +1976,6 @@ class LayoutFactory extends BaseFactory
 
         $body .= " WHERE 1 = 1 ";
 
-        // Logged in user view permissions
-        $this->viewPermissionSql('Xibo\Entity\Campaign', $body, $params, 'campaign.campaignId', 'layout.userId', $filterBy, 'campaign.permissionsFolderId');
-
         // Layout Like
         if ($parsedFilter->getString('layout') != '') {
             $terms = explode(',', $parsedFilter->getString('layout'));
@@ -2031,6 +2040,11 @@ class LayoutFactory extends BaseFactory
             $params['userId'] = $parsedFilter->getInt('userId', ['default' => 0]);
         }
 
+        if ($parsedFilter->getCheckbox('onlyMyLayouts') === 1) {
+            $body .= ' AND layout.userid = :userId ';
+            $params['userId'] = $this->getUser()->userId;
+        }
+
         // User Group filter
         if ($parsedFilter->getInt('ownerUserGroupId', ['default' => 0]) != 0) {
             $body .= ' AND layout.userid IN (SELECT DISTINCT userId FROM `lkusergroup` WHERE groupId =  :ownerUserGroupId) ';
@@ -2069,6 +2083,11 @@ class LayoutFactory extends BaseFactory
         if ($parsedFilter->getString('code', $filterBy) != '') {
             $body.= " AND layout.code = :code ";
             $params['code'] = $parsedFilter->getString('code');
+        }
+
+        if ($parsedFilter->getString('codeLike', $filterBy) != '') {
+            $body.= ' AND layout.code LIKE :codeLike ';
+            $params['codeLike'] = '%' . $parsedFilter->getString('codeLike') . '%';
         }
 
         // Tags
@@ -2167,6 +2186,14 @@ class LayoutFactory extends BaseFactory
             $params['folderId'] = $parsedFilter->getInt('folderId');
         }
 
+        if ($parsedFilter->getString('orientation') !== null) {
+            $body .= ' AND layout.orientation = :orientation ';
+            $params['orientation'] = $parsedFilter->getString('orientation');
+        }
+
+        // Logged in user view permissions
+        $this->viewPermissionSql('Xibo\Entity\Campaign', $body, $params, 'campaign.campaignId', 'layout.userId', $filterBy, 'campaign.permissionsFolderId');
+
         // Sorting?
         $order = '';
 
@@ -2207,6 +2234,7 @@ class LayoutFactory extends BaseFactory
             $layout->backgroundzIndex = $parsedRow->getInt('backgroundzIndex');
             $layout->width = $parsedRow->getDouble('width');
             $layout->height = $parsedRow->getDouble('height');
+            $layout->orientation = $parsedRow->getString('orientation');
             $layout->createdDt = $parsedRow->getDate('createdDt');
             $layout->modifiedDt = $parsedRow->getDate('modifiedDt');
             $layout->displayOrder = $parsedRow->getInt('displayOrder');
@@ -2397,4 +2425,192 @@ class LayoutFactory extends BaseFactory
             }
         }
     }
+
+    /**
+     * @param int $layoutId
+     * @return array
+     */
+    public function getActionPublishedLayoutIds($layoutId): array
+    {
+        $actionLayoutIds = [];
+
+        // Get Layout Codes set in Actions on this Layout
+        // Actions directly on this Layout
+        $sql = '
+            SELECT DISTINCT `action`.layoutCode
+              FROM `action`
+                INNER JOIN `layout`
+                ON `layout`.layoutId = `action`.sourceId
+             WHERE `action`.actionType = :actionType
+                AND `layout`.layoutId = :layoutId
+                AND `layout`.parentId IS NULL
+        ';
+
+        // Actions on this Layout's Regions
+        $sql .= '
+            UNION
+            SELECT DISTINCT `action`.layoutCode
+              FROM `action`
+                INNER JOIN `region`
+                ON `region`.regionId = `action`.sourceId
+                INNER JOIN `layout`
+                ON `layout`.layoutId = `region`.layoutId
+             WHERE `action`.actionType = :actionType
+                AND `layout`.layoutId = :layoutId
+                AND `layout`.parentId IS NULL
+        ';
+
+        // Actions on this Layout's Widgets
+        $sql .= '
+            UNION
+            SELECT DISTINCT `action`.layoutCode
+              FROM `action`
+                INNER JOIN `widget`
+                ON `widget`.widgetId = `action`.sourceId
+                INNER JOIN `playlist`
+                ON `playlist`.playlistId = `widget`.playlistId
+                INNER JOIN `region`
+                ON `region`.regionId = `playlist`.regionId
+                INNER JOIN `layout`
+                ON `layout`.layoutId = `region`.layoutId
+             WHERE `action`.actionType = :actionType
+                AND `layout`.layoutId = :layoutId
+                AND `layout`.parentId IS NULL
+        ';
+
+        // Join them together and get the Layout's referenced by those codes
+        $actionLayoutCodes = $this->getStore()->select('
+            SELECT `layout`.layoutId
+              FROM `layout`
+             WHERE `layout`.code IN (
+                 ' . $sql . '
+             )
+        ', [
+            'actionType' => 'navLayout',
+            'layoutId' => $layoutId,
+        ]);
+
+        foreach ($actionLayoutCodes as $row) {
+            $actionLayoutIds[] = $row['layoutId'];
+        }
+
+        return $actionLayoutIds;
+    }
+
+    // <editor-fold desc="Concurrency Locking">
+
+    /**
+     * @param \Stash\Interfaces\PoolInterface|null $pool
+     * @return $this
+     */
+    public function usePool($pool)
+    {
+        $this->pool = $pool;
+        return $this;
+    }
+
+    /**
+     * @return \Stash\Interfaces\PoolInterface|\Stash\Pool
+     */
+    private function getPool()
+    {
+        if ($this->pool === null) {
+            $this->pool = new Pool();
+        }
+        return $this->pool;
+    }
+
+    /**
+     * @param \Xibo\Entity\Layout $layout
+     * @return \Xibo\Entity\Layout
+     */
+    public function decorateLockedProperties(Layout $layout): Layout
+    {
+        $locked = $this->pool->getItem('locks/layout/' . $layout->layoutId);
+        $layout->isLocked = $locked->isMiss() ? [] : $locked->get();
+        if (!empty($layout->isLocked)) {
+            $layout->isLocked->lockedUser = ($layout->isLocked->userId != $this->getUser()->userId);
+        }
+
+        return $layout;
+    }
+
+    /**
+     * Hold a lock on concurrent requests
+     *  blocks if the request is locked
+     * @param int $ttl seconds
+     * @param int $wait seconds
+     * @param int $tries
+     * @throws \Xibo\Support\Exception\GeneralException
+     */
+    public function concurrentRequestLock(Layout $layout, $pass = 1, $ttl = 300, $wait = 6, $tries = 10): Layout
+    {
+        $lock = $this->getPool()->getItem('locks/layout_build/' . $layout->campaignId);
+
+        // Set the invalidation method to simply return the value (not that we use it, but it gets us a miss on expiry)
+        // isMiss() returns false if the item is missing or expired, no exceptions.
+        $lock->setInvalidationMethod(Invalidation::NONE);
+
+        // Get the lock
+        // other requests will wait here until we're done, or we've timed out
+        $locked = $lock->get();
+
+        // Did we get a lock?
+        // if we're a miss, then we're not already locked
+        if ($lock->isMiss() || $locked === false) {
+            $this->getLog()->debug('Lock miss or false. Locking for ' . $ttl . ' seconds. $locked is '. var_export($locked, true));
+
+            // so lock now
+            $lock->set(true);
+            $lock->expiresAfter($ttl);
+            $lock->save();
+
+            // If we have been locked previously, then reload our layout before passing back out.
+            if ($pass > 1) {
+                $layout = $this->getById($layout->layoutId);
+            }
+
+            return $layout;
+        } else {
+            // We are a hit - we must be locked
+            $this->getLog()->debug('LOCK hit for ' . $layout->campaignId . ' expires '
+                . $lock->getExpiration()->format('Y-m-d H:i:s') . ', created '
+                . $lock->getCreation()->format('Y-m-d H:i:s'));
+
+            // Try again?
+            $tries--;
+
+            if ($tries <= 0) {
+                // We've waited long enough
+                throw new GeneralException('Concurrent record locked, time out.');
+            } else {
+                $this->getLog()->debug('Unable to get a lock, trying again. Remaining retries: ' . $tries);
+
+                // Hang about waiting for the lock to be released.
+                sleep($wait);
+
+                // Recursive request (we've decremented the number of tries)
+                $pass++;
+                return $this->concurrentRequestLock($layout, $pass, $ttl, $wait, $tries);
+            }
+        }
+    }
+
+    /**
+     * Release a lock on concurrent requests
+     */
+    public function concurrentRequestRelease(Layout $layout)
+    {
+        $this->getLog()->debug('Releasing lock ' . $layout->campaignId);
+
+        $lock = $this->getPool()->getItem('locks/layout_build/' . $layout->campaignId);
+
+        // Release lock
+        $lock->set(false);
+        $lock->expiresAfter(10); // Expire straight away (but give it time to save the thing)
+
+        $this->getPool()->save($lock);
+    }
+
+    // </editor-fold>
 }

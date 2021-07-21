@@ -309,8 +309,15 @@ div.dropdown-menu-form {
     }
 }
 
+.display-screenshot-container {
+    text-align: center;
+    display: block;
+    background-color: #333;
+}
+
 .display-screenshot {
-    width: 200px;
+    max-width: 120px;
+    max-height: 80px;
 }
 
 #page-wrapper {
@@ -1332,4 +1339,10 @@ div.dataTables_wrapper div.dataTables_info {
 
 .nav-tabs .nav-link:hover {
     background-color: #eee;
+}
+
+/* Colour picker */
+.colorpicker-input .input-group-prepend > i{
+    cursor: pointer;
+    padding-left: 20px;
 }

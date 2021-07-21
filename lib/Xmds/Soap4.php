@@ -240,6 +240,7 @@ class Soap4 extends Soap
                 $display->licensed = $this->getConfig()->getSetting('DISPLAY_AUTO_AUTH', 0);
                 $display->incSchedule = 0;
                 $display->clientAddress = $this->getIp();
+                $display->setDispatcher($this->getDispatcher());
 
                 if (!$display->isDisplaySlotAvailable()) {
                     $display->licensed = 0;
@@ -355,8 +356,9 @@ class Soap4 extends Soap
                 $requiredFile = $this->requiredFileFactory->getByDisplayAndLayout($this->display->displayId, $fileId);
 
                 // Load the layout
-                $layout = $this->layoutFactory->getById($fileId);
+                $layout = $this->layoutFactory->concurrentRequestLock($this->layoutFactory->getById($fileId));
                 $path = $layout->xlfToDisk();
+                $this->layoutFactory->concurrentRequestRelease($layout);
 
                 $file = file_get_contents($path);
                 $chunkSize = filesize($path);
@@ -581,10 +583,15 @@ class Soap4 extends Soap
         }
 
         // Current Layout
-        $currentLayoutId = $sanitizedStatus->getInt('currentLayoutId');
+        // don't fail: xibosignage/xibo#2517
+        try {
+            $currentLayoutId = $sanitizedStatus->getInt('currentLayoutId');
 
-        if ($currentLayoutId !== null) {
-            $this->display->setCurrentLayoutId($this->getPool(), $currentLayoutId);
+            if ($currentLayoutId !== null) {
+                $this->display->setCurrentLayoutId($this->getPool(), $currentLayoutId);
+            }
+        } catch (\Exception $exception) {
+            $this->getLog()->debug('Ignoring currentLayout due to a validation error.');
         }
 
         // Status Dialog

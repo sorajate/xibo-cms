@@ -10,10 +10,7 @@ namespace Xibo\Factory;
 use League\OAuth2\Server\Entities\ClientEntityInterface;
 use League\OAuth2\Server\Repositories\ScopeRepositoryInterface;
 use Xibo\Entity\ApplicationScope;
-use Xibo\Helper\SanitizerService;
 use Xibo\OAuth\ScopeEntity;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
 use Xibo\Support\Exception\NotFoundException;
 
 /**
@@ -22,17 +19,6 @@ use Xibo\Support\Exception\NotFoundException;
  */
 class ApplicationScopeFactory extends BaseFactory implements ScopeRepositoryInterface
 {
-    /**
-     * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
-     */
-    public function __construct($store, $log, $sanitizerService)
-    {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
-    }
-
     /**
      * Create Empty
      * @return ApplicationScope
@@ -52,8 +38,9 @@ class ApplicationScopeFactory extends BaseFactory implements ScopeRepositoryInte
     {
         $clientRedirectUri = $this->query(null, ['id' => $id]);
 
-        if (count($clientRedirectUri) <= 0)
+        if (count($clientRedirectUri) <= 0) {
             throw new NotFoundException();
+        }
 
         return $clientRedirectUri[0];
     }
@@ -136,7 +123,10 @@ class ApplicationScopeFactory extends BaseFactory implements ScopeRepositoryInte
         $this->getLog()->debug('getScopeEntityByIdentifier: ' . $scopeIdentifier);
 
         try {
-            return $this->getById($scopeIdentifier);
+            $applicationScope = $this->getById($scopeIdentifier);
+            $scope = new ScopeEntity();
+            $scope->setIdentifier($applicationScope->getId());
+            return $scope;
         } catch (NotFoundException $e) {
             return null;
         }
@@ -158,7 +148,7 @@ class ApplicationScopeFactory extends BaseFactory implements ScopeRepositoryInte
             $found = false;
 
             /** @var \Xibo\Entity\Application $clientEntity */
-            foreach ($clientEntity->scopes as $validScope) {
+            foreach ($clientEntity->getScopes() as $validScope) {
                 if ($validScope->getIdentifier() === $scope->getIdentifier()) {
                     $found = true;
                     break;

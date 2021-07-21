@@ -39,6 +39,7 @@ use Xibo\Factory\RegionFactory;
 use Xibo\Factory\TagFactory;
 use Xibo\Helper\DateFormatHelper;
 use Xibo\Helper\Environment;
+use Xibo\Helper\Profiler;
 use Xibo\Service\ConfigServiceInterface;
 use Xibo\Service\LogServiceInterface;
 use Xibo\Storage\StorageServiceInterface;
@@ -53,6 +54,8 @@ use Xibo\Widget\ModuleWidget;
  * @package Xibo\Entity
  *
  * @SWG\Definition()
+ *
+ * @property $isLocked
  */
 class Layout implements \JsonSerializable
 {
@@ -209,6 +212,14 @@ class Layout implements \JsonSerializable
      * )
      */
     public $height;
+
+    /**
+     * @var string
+     * @SWG\Property(
+     *  description="The Layout Orientation"
+     * )
+     */
+    public $orientation;
 
     /**
      * @var int
@@ -373,7 +384,6 @@ class Layout implements \JsonSerializable
      * @param StorageServiceInterface $store
      * @param LogServiceInterface $log
      * @param ConfigServiceInterface $config
-     * @param EventDispatcherInterface $eventDispatcher
      * @param PermissionFactory $permissionFactory
      * @param RegionFactory $regionFactory
      * @param TagFactory $tagFactory
@@ -385,12 +395,11 @@ class Layout implements \JsonSerializable
      * @param ActionFactory $actionFactory
      * @param FolderFactory $folderFactory
      */
-    public function __construct($store, $log, $config, $eventDispatcher, $permissionFactory, $regionFactory, $tagFactory, $campaignFactory, $layoutFactory, $mediaFactory, $moduleFactory, $playlistFactory, $actionFactory, $folderFactory)
+    public function __construct($store, $log, $config, $permissionFactory, $regionFactory, $tagFactory, $campaignFactory, $layoutFactory, $mediaFactory, $moduleFactory, $playlistFactory, $actionFactory, $folderFactory)
     {
         $this->setCommonDependencies($store, $log);
         $this->setPermissionsClass('Xibo\Entity\Campaign');
         $this->config = $config;
-        $this->dispatcher = $eventDispatcher;
         $this->permissionFactory = $permissionFactory;
         $this->regionFactory = $regionFactory;
         $this->tagFactory = $tagFactory;
@@ -978,14 +987,13 @@ class Layout implements \JsonSerializable
             // Unassign from all Campaigns
             foreach ($this->campaigns as $campaign) {
                 /* @var Campaign $campaign */
-                $campaign->setChildObjectDependencies($this->layoutFactory);
+                $campaign->layouts = $this->layoutFactory->getByCampaignId($campaign->campaignId, false);
                 $campaign->unassignLayout($this, true);
                 $campaign->save(['validate' => false]);
             }
 
             // Delete our own Campaign
             $campaign = $this->campaignFactory->getById($this->campaignId);
-            $campaign->setChildObjectDependencies($this->layoutFactory);
             $campaign->delete();
 
             // Remove the Layout from any display defaults
@@ -1253,6 +1261,7 @@ class Layout implements \JsonSerializable
      */
     public function toXlf()
     {
+        Profiler::start('Layout::toXlf', $this->getLog());
         $this->getLog()->debug('Layout toXLF for Layout ' . $this->layout . ' - ' . $this->layoutId);
 
         $this->load(['loadPlaylists' => true]);
@@ -1356,6 +1365,7 @@ class Layout implements \JsonSerializable
                 $regionActionNode->setAttribute('source', $action->source);
                 $regionActionNode->setAttribute('actionType', $action->actionType);
                 $regionActionNode->setAttribute('triggerType', $action->triggerType);
+                $regionActionNode->setAttribute('triggerCode', $action->triggerCode);
                 $regionActionNode->setAttribute('id', $action->actionId);
 
                 $regionNode->appendChild($regionActionNode);
@@ -1423,11 +1433,13 @@ class Layout implements \JsonSerializable
                 // Is this Widget one that does not have a duration of its own?
                 // Assuming we have at least 1 region with a set duration, then we ought to
                 // Reset to the minimum duration
+                // do not do that if we are in the drawer Region!
                 if ($widget->useDuration == 0
                     && $countWidgets <= 1
                     && $regionLoop == 0
                     && $widget->type != 'video'
                     && $layoutCountRegionsWithDuration >= 1
+                    && $region->isDrawer === 0
                 ) {
                     // Make sure this Widget expires immediately so that the other Regions can be the leaders when
                     // it comes to expiring the Layout
@@ -1478,6 +1490,7 @@ class Layout implements \JsonSerializable
                     $widgetActionNode->setAttribute('source', $action->source);
                     $widgetActionNode->setAttribute('actionType', $action->actionType);
                     $widgetActionNode->setAttribute('triggerType', $action->triggerType);
+                    $widgetActionNode->setAttribute('triggerCode', $action->triggerCode);
                     $widgetActionNode->setAttribute('id', $action->actionId);
 
                     $mediaNode->appendChild($widgetActionNode);
@@ -1683,7 +1696,7 @@ class Layout implements \JsonSerializable
             }
 
             $event = new LayoutBuildRegionEvent($region->regionId, $regionNode);
-            $this->dispatcher->dispatch($event::NAME, $event);
+            $this->getDispatcher()->dispatch($event::NAME, $event);
             // End of region loop.
         }
 
@@ -1705,8 +1718,9 @@ class Layout implements \JsonSerializable
 
         // Fire a layout.build event, passing the layout and the generated document.
         $event = new LayoutBuildEvent($this, $document);
-        $this->dispatcher->dispatch($event::NAME, $event);
+        $this->getDispatcher()->dispatch($event::NAME, $event);
 
+        Profiler::end('Layout::toXlf', $this->getLog());
         return $document->saveXML();
     }
 
@@ -1786,7 +1800,7 @@ class Layout implements \JsonSerializable
             $media = $this->mediaFactory->getById($this->backgroundImageId);
             $zip->addFile($libraryLocation . $media->storedAs, 'library/' . $media->fileName);
             $media->load();
-            
+
             $mappings[] = [
                 'file' => $media->fileName,
                 'mediaid' => $media->mediaId,
@@ -1807,13 +1821,13 @@ class Layout implements \JsonSerializable
 
         if ($fonts != null) {
 
-            $this->getLog()->debug('Matched fonts: %s', json_encode($fonts));
+            $this->getLog()->debug(sprintf('Matched fonts: %s', json_encode($fonts)));
 
             foreach ($fonts[1] as $font) {
                 $matches = $this->mediaFactory->query(null, array('disableUserCheck' => 1, 'nameExact' => $font, 'allModules' => 1, 'type' => 'font'));
 
                 if (count($matches) <= 0) {
-                    $this->getLog()->info('Unmatched font during export: %s', $font);
+                    $this->getLog()->info(sprintf('Unmatched font during export: %s', $font));
                     continue;
                 }
 
@@ -1930,10 +1944,11 @@ class Layout implements \JsonSerializable
             'publishing' => false
         ], $options);
 
+        Profiler::start('Layout::xlfToDisk', $this->getLog());
+
         $path = $this->getCachePath();
 
-        if ($this->status == 3 || !file_exists($path) || ($options['publishing'] && $this->status == 5) ) {
-
+        if ($this->status == 3 || !file_exists($path)) {
             $this->getLog()->debug('XLF needs building for Layout ' . $this->layoutId);
 
             $this->load(['loadPlaylists' => true]);
@@ -2014,8 +2029,11 @@ class Layout implements \JsonSerializable
                 'notify' => $options['notify'],
                 'collectNow' => $options['collectNow']
             ]);
+        } else {
+            $this->getLog()->debug('xlfToDisk: no build required for layoutId: ' . $this->layoutId);
         }
 
+        Profiler::end('Layout::xlfToDisk', $this->getLog());
         return $path;
     }
 
@@ -2036,6 +2054,8 @@ class Layout implements \JsonSerializable
      */
     public function publishDraft()
     {
+        $this->getLog()->debug('publish: publishing draft layoutId: ' . $this->layoutId . ', status: ' . $this->status);
+
         // We are the draft - make sure we have a parent
         if (!$this->isChild())
             throw new InvalidArgumentException(__('Not a Draft'), 'statusId');
@@ -2130,10 +2150,12 @@ class Layout implements \JsonSerializable
 
         // Nullify my parentId (I no longer have a parent)
         $this->parentId = null;
-        $this->status = 5;
+
         // Add a layout history
         $this->addLayoutHistory();
 
+        // Always rebuild for a publish
+        $this->status = 3;
     }
 
     public function setPublishedDate($publishedDate)
@@ -2179,10 +2201,10 @@ class Layout implements \JsonSerializable
      */
     private function add()
     {
-        $this->getLog()->debug('Adding Layout' . $this->layout);
+        $this->getLog()->debug('Adding Layout ' . $this->layout);
 
-        $sql  = 'INSERT INTO layout (layout, description, userID, createdDT, modifiedDT, publishedStatusId, status, width, height, schemaVersion, backgroundImageId, backgroundColor, backgroundzIndex, parentId, enableStat, retired, duration, autoApplyTransitions, code)
-                  VALUES (:layout, :description, :userid, :createddt, :modifieddt, :publishedStatusId, :status, :width, :height, :schemaVersion, :backgroundImageId, :backgroundColor, :backgroundzIndex, :parentId, :enableStat, 0, 0, :autoApplyTransitions, :code)';
+        $sql  = 'INSERT INTO layout (layout, description, userID, createdDT, modifiedDT, publishedStatusId, status, width, height, orientation, schemaVersion, backgroundImageId, backgroundColor, backgroundzIndex, parentId, enableStat, retired, duration, autoApplyTransitions, code)
+                  VALUES (:layout, :description, :userid, :createddt, :modifieddt, :publishedStatusId, :status, :width, :height, :orientation, :schemaVersion, :backgroundImageId, :backgroundColor, :backgroundzIndex, :parentId, :enableStat, 0, 0, :autoApplyTransitions, :code)';
 
         $time = Carbon::now()->format(DateFormatHelper::getSystemFormat());
 
@@ -2196,6 +2218,7 @@ class Layout implements \JsonSerializable
             'status' => 3,
             'width' => $this->width,
             'height' => $this->height,
+            'orientation' => ($this->orientation == null) ?? ($this->width >= $this->height) ? 'landscape' : 'portrait',
             'schemaVersion' => Environment::$XLF_VERSION,
             'backgroundImageId' => $this->backgroundImageId,
             'backgroundColor' => $this->backgroundColor,
@@ -2245,7 +2268,7 @@ class Layout implements \JsonSerializable
 
             // Add this draft layout as a link to the campaign
             $campaign = $this->campaignFactory->getById($this->campaignId);
-            $campaign->setChildObjectDependencies($this->layoutFactory);
+            $campaign->layouts = $this->layoutFactory->getByCampaignId($campaign->campaignId, false);
             $campaign->assignLayout($this);
             $campaign->save([
                 'notify' => false
@@ -2276,6 +2299,7 @@ class Layout implements \JsonSerializable
               retired = :retired,
               width = :width,
               height = :height,
+              orientation = :orientation,
               backgroundImageId = :backgroundImageId,
               backgroundColor = :backgroundColor,
               backgroundzIndex = :backgroundzIndex,
@@ -2301,6 +2325,7 @@ class Layout implements \JsonSerializable
             'retired' => ($this->retired == null) ? 0 : $this->retired,
             'width' => $this->width,
             'height' => $this->height,
+            'orientation' => $this->orientation,
             'backgroundImageId' => ($this->backgroundImageId == null) ? null : $this->backgroundImageId,
             'backgroundColor' => $this->backgroundColor,
             'backgroundzIndex' => $this->backgroundzIndex,
@@ -2519,6 +2544,21 @@ class Layout implements \JsonSerializable
 
             $action->save();
         }
+
+        // Make sure we update targetRegionId in Drawer Widgets.
+        foreach ($allNewRegions as $region) {
+            foreach ($region->getPlaylist()->widgets as $widget) {
+                if ($region->isDrawer === 1) {
+                    foreach ($combined as $old => $new) {
+                        if ($widget->getOptionValue('targetRegionId', null) == $old) {
+                            $this->getLog()->debug('Layout Import, switching Widget targetRegionId from ' . $old . ' to ' . $new);
+                            $widget->setOptionValue('targetRegionId', 'attrib', $new);
+                            $widget->save();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -2633,6 +2673,15 @@ class Layout implements \JsonSerializable
             foreach ($region->getPlaylist()->widgets as $widget) {
                 $originalWidget = $original->getPlaylist()->getWidget($widget->getOriginalValue('widgetId'));
 
+                // Make sure we update targetRegionId in Drawer Widgets on checkout.
+                if ($region->isDrawer === 1) {
+                    foreach ($combinedRegionIds as $old => $new) {
+                        if ($widget->getOptionValue('targetRegionId', null) == $old) {
+                            $widget->setOptionValue('targetRegionId', 'attrib', $new);
+                            $widget->save();
+                        }
+                    }
+                }
                 // Interactive Actions on Widget
                 foreach ($widget->actions as $action) {
                     // switch source Id
@@ -2663,64 +2712,5 @@ class Layout implements \JsonSerializable
                 }
             }
         }
-    }
-
-    /**
-     * @throws NotFoundException
-     * @return array
-     */
-    public function getActionLayoutIds()
-    {
-        $regionIds = [];
-        $widgetIds = [];
-        $actionLayoutIds = [];
-        $codes = [];
-
-        foreach ($this->regions as $region) {
-            $regionIds[] = $region->regionId;
-            foreach($region->getPlaylist()->widgets as $widget) {
-                $widgetIds[] = $widget->widgetId;
-            }
-        }
-
-        // get the Layout Codes set in Actions on this Layout
-        $actionLayoutCodes = $this->getStore()->select('
-                SELECT DISTINCT action.layoutCode
-                  FROM layout
-                  INNER JOIN action on layout.layoutId = action.sourceId
-                WHERE action.layoutCode IS NOT NULL AND action.actionType = :actionType AND action.sourceId = :layoutId AND layout.publishedStatusId = 1
-            UNION
-                SELECT DISTINCT action.layoutCode
-                    FROM layout
-                    INNER JOIN region ON region.layoutId = layout.layoutId
-                    INNER JOIN action on region.regionId = action.sourceId
-                WHERE action.layoutCode IS NOT NULL AND action.actionType = :actionType AND action.sourceId IN (' . implode(',', $regionIds) . ') AND layout.publishedStatusId = 1
-            UNION
-                SELECT DISTINCT action.layoutCode
-                    FROM layout
-                    INNER JOIN region ON region.layoutId = layout.layoutId
-                    INNER JOIN playlist ON playlist.regionId = region.regionId
-                    INNER JOIN widget on playlist.playlistId = widget.playlistId
-                    INNER JOIN action on widget.widgetId = action.sourceId
-                WHERE action.layoutCode IS NOT NULL AND action.actionType = :actionType AND action.sourceId IN (' . implode(',', $widgetIds) . ') AND layout.publishedStatusId = 1'
-            ,[
-                'actionType' => 'navLayout',
-                'layoutId' => $this->layoutId,
-            ]
-        );
-
-        foreach ($actionLayoutCodes as $row) {
-            $codes[] = $row['layoutCode'];
-        }
-
-        $codes = "'" .implode("','", $codes  ) . "'";
-        // get Layout Ids linked to the Layout Codes
-        $actionLayouts = $this->getStore()->select("SELECT layoutId FROM layout WHERE layout.code IN ($codes)", []);
-
-        foreach ($actionLayouts as $row) {
-            $actionLayoutIds[] = (int)$row['layoutId'];
-        }
-
-        return $actionLayoutIds;
     }
 }

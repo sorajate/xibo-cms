@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2019 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -21,14 +21,11 @@
  */
 namespace Xibo\Factory;
 
-
 use Carbon\Carbon;
 use Stash\Interfaces\PoolInterface;
 use Xibo\Entity\Schedule;
-use Xibo\Helper\SanitizerService;
+use Xibo\Entity\User;
 use Xibo\Service\ConfigServiceInterface;
-use Xibo\Service\LogServiceInterface;
-use Xibo\Storage\StorageServiceInterface;
 use Xibo\Support\Exception\NotFoundException;
 
 /**
@@ -64,9 +61,6 @@ class ScheduleFactory extends BaseFactory
 
     /**
      * Construct a factory
-     * @param StorageServiceInterface $store
-     * @param LogServiceInterface $log
-     * @param SanitizerService $sanitizerService
      * @param ConfigServiceInterface $config
      * @param PoolInterface $pool
      * @param DisplayGroupFactory $displayGroupFactory
@@ -74,10 +68,11 @@ class ScheduleFactory extends BaseFactory
      * @param UserFactory $userFactory
      * @param ScheduleReminderFactory $scheduleReminderFactory
      * @param ScheduleExclusionFactory $scheduleExclusionFactory
+     * @param User $user
      */
-    public function __construct($store, $log, $sanitizerService, $config, $pool, $displayGroupFactory, $dayPartFactory, $userFactory, $scheduleReminderFactory, $scheduleExclusionFactory)
+    public function __construct($config, $pool, $displayGroupFactory, $dayPartFactory, $userFactory, $scheduleReminderFactory, $scheduleExclusionFactory, $user)
     {
-        $this->setCommonDependencies($store, $log, $sanitizerService);
+        $this->setAclDependencies($user, $userFactory);
         $this->config = $config;
         $this->pool = $pool;
         $this->displayGroupFactory = $displayGroupFactory;
@@ -127,6 +122,10 @@ class ScheduleFactory extends BaseFactory
      */
     public function getByDisplayGroupId($displayGroupId)
     {
+        if ($displayGroupId == null) {
+            return [];
+        }
+
         return $this->query(null, ['disableUserCheck' => 1, 'displayGroupIds' => [$displayGroupId]]);
     }
 
@@ -316,6 +315,11 @@ class ScheduleFactory extends BaseFactory
             ON `command`.commandId = `schedule`.commandId
           WHERE 1 = 1
         ';
+
+        // Hide dooh Schedules from standard view.
+        if ($this->getUser()->showContentFrom == 1 && $this->getUser()->userTypeId != 4 && $parsedFilter->getInt('disableUserCheck') !== 1) {
+            $sql .= ' AND `schedule`.userId IN (SELECT userId FROM user WHERE userTypeId <> 4) ';
+        }
 
         if ($parsedFilter->getInt('eventId') !== null) {
             $sql .= ' AND `schedule`.eventId = :eventId ';

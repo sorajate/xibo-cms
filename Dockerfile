@@ -55,6 +55,9 @@ RUN npm install --only=prod
 # Copy ui folder
 COPY ./ui ./ui
 
+# Copy modules source folder
+COPY ./modules/src ./modules/src
+
 # Build webpack
 RUN npm run publish
 
@@ -138,6 +141,7 @@ ENV CMS_DEV_MODE=false \
     CMS_SMTP_REWRITE_DOMAIN=gmail.com \
     CMS_SMTP_HOSTNAME=none \
     CMS_SMTP_FROM_LINE_OVERRIDE=YES \
+    CMS_SMTP_FROM=none \
     CMS_ALIAS=none \
     CMS_PHP_SESSION_GC_MAXLIFETIME=1440 \
     CMS_PHP_POST_MAX_SIZE=2G \
@@ -155,6 +159,9 @@ ENV CMS_DEV_MODE=false \
     CMS_APACHE_TIMEOUT=30 \
     CMS_APACHE_OPTIONS_INDEXES=false \
     CMS_QUICK_CHART_URL=http://cms-quickchart:3400 \
+    CMS_USE_MEMCACHED=false \
+    MEMCACHED_HOST=memcached \
+    MEMCACHED_PORT=11211 \
     XTR_ENABLED=true \
     GIT_COMMIT=$GIT_COMMIT
 
@@ -169,6 +176,9 @@ COPY --from=composer /app /var/www/cms
 
 # Copy dist built webpack app folder to web
 COPY --from=webpack /app/web/dist /var/www/cms/web/dist
+
+# Copy modules built webpack app folder to cms modules
+COPY --from=webpack /app/modules /var/www/cms/modules
 
 # All other files (.dockerignore excludes many things, but we tidy up the rest below)
 COPY --chown=apache:apache . /var/www/cms

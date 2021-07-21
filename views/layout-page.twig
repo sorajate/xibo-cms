@@ -48,11 +48,20 @@
                                         {{ inline.inputWithTags("tags", title, null, helpText, null, null, null, "exactTags", exactTagTitle) }}
                                     {% endif %}
 
+                                    {% set title %}{% trans "Code" %}{% endset %}
+                                    {{ inline.input('codeLike', title) }}
+
                                     {% set attributes = [
                                     { name: "data-allow-clear", value: "true" },
                                     { name: "data-placeholder--id", value: null },
                                     { name: "data-placeholder--value", value: "" }
                                     ] %}
+
+                                    {% if currentUser.featureEnabled("displaygroup.view") %}
+                                        {% set title %}{% trans "Display Group" %}{% endset %}
+                                        {% set helpText %}{% trans "Show Layouts active on the selected Display / Display Group" %}{% endset %}
+                                        {{ inline.dropdown("activeDisplayGroupId", "single", title, "", [{displayGroupId:null, displayGroup:""}]|merge(displayGroups), "displayGroupId", "displayGroup", helpText, "selectPicker", "", "", "", attributes) }}
+                                    {% endif %}
 
                                     {% set title %}{% trans "Owner" %}{% endset %}
                                     {% set helpText %}{% trans "Show items owned by the selected User." %}{% endset %}
@@ -62,11 +71,12 @@
                                     {% set helpText %}{% trans "Show items owned by users in the selected User Group." %}{% endset %}
                                     {{ inline.dropdown("ownerUserGroupId", "single", title, "", [{groupId:null, group:""}]|merge(groups), "groupId", "group", helpText, "selectPicker", "", "", "", attributes) }}
 
-                                    {% if currentUser.featureEnabled("displaygroup.view") %}
-                                        {% set title %}{% trans "Display Group" %}{% endset %}
-                                        {% set helpText %}{% trans "Show Layouts active on the selected Display / Display Group" %}{% endset %}
-                                        {{ inline.dropdown("activeDisplayGroupId", "single", title, "", [{displayGroupId:null, displayGroup:""}]|merge(displayGroups), "displayGroupId", "displayGroup", helpText, "selectPicker", "", "", "", attributes) }}
-                                    {% endif %}
+                                    {% set title %}{% trans "Orientation" %}{% endset %}
+                                    {% set option1 = "All"|trans %}
+                                    {% set option2 = "Landscape"|trans %}
+                                    {% set option3 = "Portrait"|trans %}
+                                    {% set values = [{id: '', value: option1}, {id: 'landscape', value: option2}, {id: 'portrait', value: option3}] %}
+                                    {{ inline.dropdown("orientation", "single", title, '', values, "id", "value") }}
 
                                     {{ inline.hidden("folderId") }}
                                 </div>
@@ -101,23 +111,21 @@
                         </form>
                     </div>
                 </div>
-                <div class="row">
-                    <div class="col-sm-1 form-group" style="padding: 0">
-                        <button type="button" id="folder-tree-select-folder-button" class="btn btn-outline-secondary btn-sm" title="{% trans "Open / Close Folder Search options" %}"><i class="fas fa-bars fa-1x"></i></button>
-                    </div>
-                    <div class="form-group col-sm-11" style="padding: 0">
-                        <div id="breadcrumbs" style="margin-top: 5px;"></div>
-                    </div>
-                </div>
 
                 <div class="row">
                     <div class="col-sm-2 p-3 bg-light" id="grid-folder-filter">
                         <div class="form-check">
                             <input type="checkbox" class="form-check-input" id="folder-tree-clear-selection-button">
-                            <label class="form-check-label" for="folder-tree-clear-selection-button" title="{% trans "Search in all folders" %}">{% trans "Global Search" %}</label>
+                            <label class="form-check-label" for="folder-tree-clear-selection-button" title="{% trans "Search in all folders" %}">{% trans "All Folders" %}</label>
                         </div>
                         <div id="container-folder-tree"></div>
                     </div>
+
+                    <div class="folder-controller d-none">
+                        <button type="button" id="folder-tree-select-folder-button" class="btn btn-outline-secondary" title="{% trans "Open / Close Folder Search options" %}"><i class="fas fa-folder fa-1x"></i></button>
+                        <div id="breadcrumbs" class="mt-2 pl-2"></div>
+                    </div>
+                    
                     <div id="datatable-container" class="card col-sm-10 pt-4 px-2">
                         <div class="XiboData">
                             <table id="layouts" class="table table-striped responsive nowrap" data-content-type="layout" data-content-id-name="layoutId" data-state-preference-name="layoutGrid" style="width: 100%;">
@@ -163,6 +171,7 @@
             table = $("#layouts").DataTable({
                 "language": dataTablesLanguage,
                 "lengthMenu": [10, 25, 50, 100, 250, 500],
+                dom: dataTablesTemplate,
                 serverSide: true,
                 stateSave: true,
                 stateDuration: 0,
@@ -299,7 +308,7 @@
             table.on('draw', dataTableDraw);
             table.on('draw', { form: $("#layouts").closest(".XiboGrid").find(".FilterDiv form") } ,dataTableCreateTagEvents);
             table.on('processing.dt', dataTableProcessing);
-            dataTableAddButtons(table, $('#layouts_wrapper').find('.col-md-6').eq(1));
+            dataTableAddButtons(table, $('#layouts_wrapper').find('.dataTables_buttons'));
         });
 
         $("#layoutUploadForm").click(function(e) {
@@ -309,12 +318,12 @@
             // Open the upload dialog with our options.
             openUploadForm({
                 url: "{{ url_for("layout.import") }}",
-                title: "{% trans "Upload Layout" %}",
+                title: "{{ "Upload Layout"|trans }}",
                 multi: true,
                 videoImageCovers: false,
                 buttons: {
                     main: {
-                        label: "{% trans "Done" %}",
+                        label: "{{ "Done"|trans }}",
                         className: "btn-primary btn-bb-main",
                         callback: function () {
                             table.ajax.reload();
@@ -327,17 +336,17 @@
                     updateInAllChecked: {% if settings.LIBRARY_MEDIA_UPDATEINALL_CHECKB == 1 %}true{% else %}false{% endif %},
                     deleteOldRevisionsChecked: {% if settings.LIBRARY_MEDIA_DELETEOLDVER_CHECKB == 1 %}true{% else %}false{% endif %},
                     trans: {
-                        addFiles: "{% trans "Add Layout Export ZIP Files" %}",
-                        startUpload: "{% trans "Start Import" %}",
-                        cancelUpload: "{% trans "Cancel Import" %}",
-                        replaceExistingMediaMessage: "{% trans "Replace Existing Media?" %}",
-                        importTagsMessage: "{% trans "Import Tags?" %}",
-                        useExistingDataSetsMessage: "{% trans "Use existing DataSets matched by name?" %}",
-                        dataSetDataMessage: "{% trans "Import DataSet Data?" %}",
-                        selectFolder: "{% trans "Select Folder" %}",
-                        selectFolderTitle: "{% trans "Change Current Folder location" %}",
-                        selectedFolder: "{% trans "Current Folder" %}:",
-                        selectedFolderTitle: "{% trans "Upload files to this Folder" %}"
+                        addFiles: "{{ "Add Layout Export ZIP Files"|trans }}",
+                        startUpload: "{{ "Start Import"|trans }}",
+                        cancelUpload: "{{ "Cancel Import"|trans }}",
+                        replaceExistingMediaMessage: "{{ "Replace Existing Media?"|trans }}",
+                        importTagsMessage: "{{ "Import Tags?"|trans }}",
+                        useExistingDataSetsMessage: "{{ "Use existing DataSets matched by name?"|trans }}",
+                        dataSetDataMessage: "{{ "Import DataSet Data?"|trans }}",
+                        selectFolder: "{{ "Select Folder"|trans }}",
+                        selectFolderTitle: "{{ "Change Current Folder location"|trans }}",
+                        selectedFolder: "{{ "Current Folder"|trans }}:",
+                        selectedFolderTitle: "{{ "Upload files to this Folder"|trans }}"
                     },
                     upload: {
                         maxSize: {{ libraryUpload.maxSize }},
@@ -432,8 +441,8 @@
         }
 
         function setEnableStatMultiSelectFormOpen(dialog) {
-            var $input = $('<input type=checkbox id="enableStat" name="enableStat"> {% trans %} Enable Stats Collection? {% endtrans %} </input>');
-            var $helpText = $('<span class="help-block">Check to enable the collection of Proof of Play statistics for the selected items. </span>');
+            var $input = $('<input type=checkbox id="enableStat" name="enableStat"> {{ "Enable Stats Collection?"|trans }} </input>');
+            var $helpText = $('<span class="help-block">{{ "Check to enable the collection of Proof of Play statistics for the selected items."|trans }}</span>');
 
             $input.on('change', function() {
                 dialog.data().commitData = {enableStat: $(this).val()};

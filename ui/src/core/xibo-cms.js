@@ -48,8 +48,9 @@ $(document).delegate('*[data-toggle="lightbox"]', 'click', function(event) {
     event.preventDefault();
     $(this).ekkoLightbox({
         onContentLoaded: function() {
-            var container = $('.ekko-lightbox-container');
-            container.css({'max-height': container.height(), "height": ""});
+            var $container = $('.ekko-lightbox-container');
+            $container.css({'max-height': $container.height(), "height": "", 'max-width': $container.width()});
+            $container.parents('.modal-content').css({'width' : 'fit-content'});
         }
     });
 });
@@ -330,6 +331,7 @@ function XiboInitialise(scope) {
                 jsDateFormat,
                 {
                     enableTime: true,
+                    time_24hr: true,
                     enableSeconds: enableSeconds,
                     altFormat: jsDateFormat
                 }
@@ -465,6 +467,11 @@ function XiboInitialise(scope) {
     // Switch form elements
     $(scope + " input.bootstrap-switch-target").each(function() {
         $(this).bootstrapSwitch();
+    });
+
+    // Colour picker
+    $(scope + " .colorpicker-input").each(function() {
+        $(this).colorpicker();
     });
     
     // Initialize tags input form
@@ -1296,6 +1303,12 @@ function XiboInitialise(scope) {
         // Disable main input
         $input.attr('readonly', 'readonly');
     });
+
+    // Initialize color picker
+    $(scope + " .XiboColorPicker").each(function() {
+        // Create color picker
+        createColorPicker(this);
+    });
 }
 
 /**
@@ -1321,10 +1334,13 @@ function dataTableDraw(e, settings) {
     var target = $("#" + e.target.id);
 
     // Check to see if we have any buttons that are multi-select
-    var enabledButtons = target.find("div.dropdown-menu a[data-commit-url]");
+    var enabledButtons = target.find("div.dropdown-menu a.multi-select-button");
     
     // Check to see if we have tag filter for the current table
     var $tagsElement = target.closest(".XiboGrid").find('.FilterDiv #tags');
+
+    // Check to see if we have a folder system for this table
+    var $folderController = target.closest(".XiboGrid").find('.folder-controller');
 
     if (enabledButtons.length > 0 || $tagsElement.length > 0) {
 
@@ -1406,6 +1422,12 @@ function dataTableDraw(e, settings) {
               allRows.addClass('selected');
             }
         });
+    }
+
+    // Move and show folder controller if it's not inside of the table container
+    if ($folderController.length > 0 && target.closest(".dataTables_wrapper").find('.dataTables_folder .folder-controller').length == 0) {
+        $folderController.appendTo('.dataTables_folder');
+        $folderController.removeClass('d-none').addClass('d-inline-flex');
     }
 
     // Bind any buttons
@@ -3147,7 +3169,7 @@ function makeLocalSelect(element, parent) {
             // Find by text
             for(var index = 0;index < queryText.length; index++) {
                 var text = queryText[index];
-                if(text != '' && data.text.indexOf(text) > -1) {
+                if(text != '' && data.text.toUpperCase().indexOf(text.toUpperCase()) > -1) {
                     return data;
                 }
             }
@@ -3155,7 +3177,7 @@ function makeLocalSelect(element, parent) {
             // Find by tag ( data-tag )
             for(var index = 0;index < queryTags.length;index++) {
                 var tag = queryTags[index];
-                if(tag != '' && $(data.element).data('tags') != undefined && $(data.element).data('tags').indexOf(tag) > -1) {
+                if(tag != '' && $(data.element).data('tags') != undefined && $(data.element).data('tags').toUpperCase().indexOf(tag.toUpperCase()) > -1) {
                     return data;
                 }
             }
@@ -3479,6 +3501,19 @@ function initJsTreeAjax(container, id, isForm, ttl)
         });
 
         $(container).on('ready.jstree', function(e, data) {
+            // if node has children and User does not have suitable permissions, disable the node
+            // If node does NOT have children and User does not have suitable permissions, hide the node completely
+            $.each(data.instance._model.data, function(index, e) {
+                if (e.li_attr !== undefined && e.li_attr.disabled) {
+                    var node = $(container).jstree().get_node(e.id);
+                    if (e.children.length === 0) {
+                        $(container).jstree().hide_node(node);
+                    } else {
+                        $(container).jstree().disable_node(node);
+                    }
+                }
+            });
+
             // if we are on the form, we need to select tree node (currentWorkingFolder)
             // this is set/passed to twigs on render time
             if (isForm) {
@@ -3754,5 +3789,31 @@ function formatBytes(size, precision){
 
     const c=0 > precision ? 0 : precision, d = Math.floor(Math.log(size)/Math.log(1024));
     return parseFloat((size/Math.pow(1024,d)).toFixed(c))+" "+["Bytes","KB","MB","GB","TB","PB","EB","ZB","YB"][d]
+}
+
+/**
+ * Create bootstrap colorpicker
+ * @param {object} element jquery object or CSS selector
+ * @param {object} options bootstrap-colorpicker options (https://itsjavi.com/bootstrap-colorpicker/v2/)
+ */
+function createColorPicker(element, options) {
+    var $self = $(element);
+
+    // Disable autocomplete
+    $self.attr('autocomplete', 'off');
+    
+    $self.colorpicker(Object.assign({
+        format: "hex"
+    }, options));
+}
+
+/**
+ * Destroy bootstrap colorpicker
+ * @param {object} element jquery object or CSS selector
+ */
+ function destroyColorPicker(element) {
+    var $self = $(element);
+
+    $self.colorpicker('destroy');
 }
 

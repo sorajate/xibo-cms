@@ -183,6 +183,9 @@ then
     echo "Setting up Quickchart"
     mysql -D $MYSQL_DATABASE -u $MYSQL_USER -p$MYSQL_PASSWORD -h $MYSQL_HOST -P $MYSQL_PORT -e "UPDATE \`setting\` SET \`value\`='$CMS_QUICK_CHART_URL', userSee=0 WHERE \`setting\`='QUICK_CHART_URL' LIMIT 1"
 
+    # Set the daily maintenance task to run
+    mysql -D $MYSQL_DATABASE -u $MYSQL_USER -p$MYSQL_PASSWORD -h $MYSQL_HOST -P $MYSQL_PORT -e "UPDATE \`task\` SET \`runNow\`=1 WHERE \`taskId\`='1' LIMIT 1"
+
     # Update /etc/periodic/15min/cms-db-backup with current environment (for cron)
     /bin/sed -i "s/^MYSQL_BACKUP_ENABLED=.*$/MYSQL_BACKUP_ENABLED=$MYSQL_BACKUP_ENABLED/" /etc/periodic/15min/cms-db-backup
     /bin/sed -i "s/^MYSQL_USER=.*$/MYSQL_USER=$MYSQL_USER/" /etc/periodic/15min/cms-db-backup
@@ -250,8 +253,13 @@ then
 
     /bin/sed -i "s/maildomain .*$/maildomain $CMS_SMTP_REWRITE_DOMAIN/" /etc/msmtprc
     /bin/sed -i "s/domain .*$/domain $CMS_SMTP_HOSTNAME/" /etc/msmtprc
-    
-    /bin/sed -i "s/from .*$/from cms@$CMS_SMTP_REWRITE_DOMAIN/" /etc/msmtprc
+
+    if [ "$CMS_SMTP_FROM" == "none" ]
+    then    
+      /bin/sed -i "s/from .*$/from cms@$CMS_SMTP_REWRITE_DOMAIN/" /etc/msmtprc
+    else
+      /bin/sed -i "s/from .*$/from $CMS_SMTP_FROM/" /etc/msmtprc
+    fi
 
     mkdir -p /var/www/cms/library/temp
     chown apache.apache -R /var/www/cms/library

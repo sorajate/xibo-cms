@@ -34,6 +34,7 @@ use Xibo\Factory\UserGroupFactory;
 use Xibo\Helper\ByteFormatter;
 use Xibo\Helper\DateFormatHelper;
 use Xibo\Helper\WakeOnLan;
+use Xibo\Service\MediaServiceInterface;
 use Xibo\Support\Exception\GeneralException;
 use Xibo\Widget\ModuleWidget;
 
@@ -48,8 +49,8 @@ class MaintenanceRegularTask implements TaskInterface
     /** @var Display */
     private $displayController;
 
-    /** @var Library */
-    private $libraryController;
+    /** @var MediaServiceInterface */
+    private $mediaService;
 
     /** @var DisplayFactory */
     private $displayFactory;
@@ -76,7 +77,7 @@ class MaintenanceRegularTask implements TaskInterface
     public function setFactories($container)
     {
         $this->displayController = $container->get('\Xibo\Controller\Display');
-        $this->libraryController = $container->get('\Xibo\Controller\Library');
+        $this->mediaService = $container->get('mediaService');
 
         $this->displayFactory = $container->get('displayFactory');
         $this->notificationFactory = $container->get('notificationFactory');
@@ -148,7 +149,7 @@ class MaintenanceRegularTask implements TaskInterface
                     // We need to un-licence some displays
                     $difference = count($displays) - $maxDisplays;
 
-                    $this->log->alert('Max %d authorised displays exceeded, we need to un-authorise %d of %d displays', $maxDisplays, $difference, count($displays));
+                    $this->log->alert(sprintf('Max %d authorised displays exceeded, we need to un-authorise %d of %d displays', $maxDisplays, $difference, count($displays)));
 
                     $update = $dbh->prepare('UPDATE `display` SET licensed = 0 WHERE displayId = :displayId');
 
@@ -245,13 +246,15 @@ class MaintenanceRegularTask implements TaskInterface
         foreach ($this->layoutFactory->query(null, ['status' => 3, 'showDrafts' => 0, 'disableUserCheck' => 1]) as $layout) {
             /* @var \Xibo\Entity\Layout $layout */
             try {
+                $layout = $this->layoutFactory->concurrentRequestLock($layout);
                 $layout->xlfToDisk(['notify' => true]);
 
                 // Commit after each build
                 // https://github.com/xibosignage/xibo/issues/1593
                 $this->store->commitIfNecessary();
+                $this->layoutFactory->concurrentRequestRelease($layout);
             } catch (\Exception $e) {
-                $this->log->error('Maintenance cannot build Layout %d, %s.', $layout->layoutId, $e->getMessage());
+                $this->log->error(sprintf('Maintenance cannot build Layout %d, %s.', $layout->layoutId, $e->getMessage()));
             }
         }
 
@@ -266,8 +269,8 @@ class MaintenanceRegularTask implements TaskInterface
         $this->runMessage .= '## ' . __('Tidy Library') . PHP_EOL;
 
         // Keep tidy
-        $this->libraryController->removeExpiredFiles();
-        $this->libraryController->removeTempFiles();
+        $this->mediaService->removeExpiredFiles();
+        $this->mediaService->removeTempFiles();
 
         $this->runMessage .= ' - Done' . PHP_EOL . PHP_EOL;
     }
@@ -411,11 +414,13 @@ class MaintenanceRegularTask implements TaskInterface
                             throw new GeneralException(__($layout->statusMessage));
                         } else {
                             // publish the layout
+                            $layout = $this->layoutFactory->concurrentRequestLock($layout);
                             $draft = $this->layoutFactory->getByParentId($layout->layoutId);
                             $draft->publishDraft();
                             $draft->load();
                             $draft->xlfToDisk(['notify' => true, 'exceptionOnError' => true, 'exceptionOnEmptyRegion' => false]);
 
+                            $this->layoutFactory->concurrentRequestRelease($layout);
                             $this->log->info('Published layout ID ' . $layout->layoutId . ' new layout id is ' . $draft->layoutId);
                         }
                     } catch (GeneralException $e) {

@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright (C) 2020 Xibo Signage Ltd
+ * Copyright (C) 2021 Xibo Signage Ltd
  *
  * Xibo - Digital Signage - http://www.xibo.org.uk
  *
@@ -23,16 +23,9 @@ namespace Xibo\Entity;
 
 use Carbon\Carbon;
 use Respect\Validation\Validator as v;
-use Xibo\Factory\DisplayFactory;
-use Xibo\Factory\DisplayGroupFactory;
-use Xibo\Factory\LayoutFactory;
 use Xibo\Factory\MediaFactory;
 use Xibo\Factory\PermissionFactory;
-use Xibo\Factory\PlayerVersionFactory;
-use Xibo\Factory\PlaylistFactory;
-use Xibo\Factory\ScheduleFactory;
 use Xibo\Factory\TagFactory;
-use Xibo\Factory\WidgetFactory;
 use Xibo\Helper\DateFormatHelper;
 use Xibo\Service\ConfigServiceInterface;
 use Xibo\Service\LogServiceInterface;
@@ -41,7 +34,6 @@ use Xibo\Support\Exception\ConfigurationException;
 use Xibo\Support\Exception\DuplicateEntityException;
 use Xibo\Support\Exception\GeneralException;
 use Xibo\Support\Exception\InvalidArgumentException;
-use Xibo\Support\Exception\NotFoundException;
 
 /**
  * Class Media
@@ -199,6 +191,14 @@ class Media implements \JsonSerializable
      */
     public $enableStat;
 
+    /**
+     * @var string
+     * @SWG\Property(
+     *  description="The orientation of the Media file"
+     * )
+     */
+    public $orientation;
+
     // Private
     private $unassignTags = [];
     private $requestOptions = [];
@@ -223,9 +223,9 @@ class Media implements \JsonSerializable
      */
     public $permissionsFolderId;
 
-    private $widgets = [];
-    private $displayGroups = [];
-    private $layoutBackgroundImages = [];
+    public $widgets = [];
+    public $displayGroups = [];
+    public $layoutBackgroundImages = [];
     private $permissions = [];
 
     /**
@@ -244,40 +244,9 @@ class Media implements \JsonSerializable
     private $tagFactory;
 
     /**
-     * @var LayoutFactory
-     */
-    private $layoutFactory;
-
-    /**
-     * @var WidgetFactory
-     */
-    private $widgetFactory;
-
-    /**
-     * @var DisplayGroupFactory
-     */
-    private $displayGroupFactory;
-
-    /**
      * @var PermissionFactory
      */
     private $permissionFactory;
-
-    /**
-     * @var PlayerVersionFactory
-     */
-    private $playerVersionFactory;
-
-    /**
-     * @var PlaylistFactory
-     */
-    private $playlistFactory;
-
-    /** @var  DisplayFactory */
-    private $displayFactory;
-
-    /** @var  ScheduleFactory */
-    private $scheduleFactory;
 
     /**
      * Entity constructor.
@@ -287,9 +256,8 @@ class Media implements \JsonSerializable
      * @param MediaFactory $mediaFactory
      * @param PermissionFactory $permissionFactory
      * @param TagFactory $tagFactory
-     * @param PlaylistFactory $playlistFactory
      */
-    public function __construct($store, $log, $config, $mediaFactory, $permissionFactory, $tagFactory, $playlistFactory)
+    public function __construct($store, $log, $config, $mediaFactory, $permissionFactory, $tagFactory)
     {
         $this->setCommonDependencies($store, $log);
 
@@ -297,28 +265,6 @@ class Media implements \JsonSerializable
         $this->mediaFactory = $mediaFactory;
         $this->permissionFactory = $permissionFactory;
         $this->tagFactory = $tagFactory;
-        $this->playlistFactory = $playlistFactory;
-    }
-
-    /**
-     * Set Child Object Dependencies
-     * @param LayoutFactory $layoutFactory
-     * @param WidgetFactory $widgetFactory
-     * @param DisplayGroupFactory $displayGroupFactory
-     * @param DisplayFactory $displayFactory
-     * @param ScheduleFactory $scheduleFactory
-     * @param PlayerVersionFactory $playerVersionFactory
-     * @return $this
-     */
-    public function setChildObjectDependencies($layoutFactory, $widgetFactory, $displayGroupFactory, $displayFactory, $scheduleFactory, $playerVersionFactory)
-    {
-        $this->layoutFactory = $layoutFactory;
-        $this->widgetFactory = $widgetFactory;
-        $this->displayGroupFactory  = $displayGroupFactory;
-        $this->displayFactory = $displayFactory;
-        $this->scheduleFactory = $scheduleFactory;
-        $this->playerVersionFactory = $playerVersionFactory;
-        return $this;
     }
 
     public function __clone()
@@ -438,7 +384,7 @@ class Media implements \JsonSerializable
             }
         }
 
-        $this->getLog()->debug('Tags after removal %s', json_encode($this->tags));
+        $this->getLog()->debug(sprintf('Tags after removal %s', json_encode($this->tags)));
 
         return $this;
     }
@@ -458,12 +404,12 @@ class Media implements \JsonSerializable
                 return $a->tagId - $b->tagId;
             });
 
-            $this->getLog()->debug('Tags to be removed: %s', json_encode($this->unassignTags));
+            $this->getLog()->debug(sprintf('Tags to be removed: %s', json_encode($this->unassignTags)));
 
             // Replace the arrays
             $this->tags = $tags;
 
-            $this->getLog()->debug('Tags remaining: %s', json_encode($this->tags));
+            $this->getLog()->debug(sprintf('Tags remaining: %s', json_encode($this->tags)));
         } else {
             $this->getLog()->debug('Tags were not changed');
         }
@@ -510,15 +456,16 @@ class Media implements \JsonSerializable
      */
     public function load($options = [])
     {
-        if ($this->loaded || $this->mediaId == null)
+        if ($this->loaded || $this->mediaId == null) {
             return;
+        }
 
         $options = array_merge([
             'deleting' => false,
             'fullInfo' => false
         ], $options);
 
-        $this->getLog()->debug('Loading Media. Options = %s', json_encode($options));
+        $this->getLog()->debug(sprintf('Loading Media. Options = %s', json_encode($options)));
 
         // Tags
         $this->tags = $this->tagFactory->loadByMediaId($this->mediaId);
@@ -526,21 +473,8 @@ class Media implements \JsonSerializable
         // Are we loading for a delete? If so load the child models, unless we're a module file in which case
         // we've no need.
         if ($this->mediaType !== 'module' && ($options['deleting'] || $options['fullInfo'])) {
-
-            if ($this->widgetFactory === null)
-                throw new ConfigurationException(__('Call setChildObjectDependencies before load'));
-
             // Permissions
             $this->permissions = $this->permissionFactory->getByObjectId(get_class($this), $this->mediaId);
-
-            // Widgets
-            $this->widgets = $this->widgetFactory->getByMediaId($this->mediaId);
-
-            // Layout Background Images
-            $this->layoutBackgroundImages = $this->layoutFactory->getByBackgroundImageId($this->mediaId);
-
-            // Display Groups
-            $this->displayGroups = $this->displayGroupFactory->getByMediaId($this->mediaId);
         }
 
         $this->loaded = true;
@@ -657,18 +591,6 @@ class Media implements \JsonSerializable
 
         $this->load(['deleting' => true]);
 
-        // If there is a parent, bring it back
-        try {
-            $parentMedia = $this->mediaFactory->getParentById($this->mediaId);
-            $parentMedia->isEdited = 0;
-            $parentMedia->parentId = null;
-            $parentMedia->save(['validate' => false]);
-        }
-        catch (NotFoundException $e) {
-            // This is fine, no parent
-            $parentMedia = null;
-        }
-
         foreach ($this->permissions as $permission) {
             /* @var Permission $permission */
             $permission->delete();
@@ -680,67 +602,8 @@ class Media implements \JsonSerializable
             $tag->save();
         }
 
-        foreach ($this->widgets as $widget) {
-            /* @var \Xibo\Entity\Widget $widget */
-            $widget->unassignMedia($this->mediaId);
-
-            if ($parentMedia != null) {
-                // Assign the parent media to the widget instead
-                $widget->assignMedia($parentMedia->mediaId);
-
-                // Swap any audio nodes over to this new widget media assignment.
-                $this->getStore()->update('
-                  UPDATE `lkwidgetaudio` SET mediaId = :mediaId WHERE widgetId = :widgetId AND mediaId = :oldMediaId
-                ' , [
-                    'mediaId' => $parentMedia->mediaId,
-                    'widgetId' => $widget->widgetId,
-                    'oldMediaId' => $this->mediaId
-                ]);
-            } else {
-                // Also delete the `lkwidgetaudio`
-                $widget->unassignAudioById($this->mediaId);
-            }
-
-            // This action might result in us deleting a widget (unless we are a temporary file with an expiry date)
-            if ($this->mediaType != 'module' && count($widget->mediaIds) <= 0) {
-                $widget->setChildObjectDepencencies($this->playlistFactory);
-                $widget->delete();
-            } else {
-                $widget->save(['saveWidgetOptions' => false]);
-            }
-        }
-
-        foreach ($this->displayGroups as $displayGroup) {
-            /* @var \Xibo\Entity\DisplayGroup $displayGroup */
-            $displayGroup->setChildObjectDependencies($this->displayFactory, $this->layoutFactory, $this->mediaFactory, $this->scheduleFactory);
-            $displayGroup->unassignMedia($this);
-
-            if ($parentMedia != null)
-                $displayGroup->assignMedia($parentMedia);
-
-            $displayGroup->save(['validate' => false]);
-        }
-
-        foreach ($this->layoutBackgroundImages as $layout) {
-            /* @var Layout $layout */
-            $layout->backgroundImageId = null;
-            $layout->save(Layout::$saveOptionsMinimum);
-        }
-
         $this->deleteRecord();
         $this->deleteFile();
-
-        // Update any background images
-        if ($this->mediaType == 'image' && $parentMedia != null) {
-            $this->getLog()->debug('Updating layouts with the old media %d as the background image.', $this->mediaId);
-            // Get all Layouts with this as the background image
-            foreach ($this->layoutFactory->query(null, ['backgroundImageId' => $this->mediaId]) as $layout) {
-                /* @var Layout $layout */
-                $this->getLog()->debug('Found layout that needs updating. ID = %d. Setting background image id to %d', $layout->layoutId, $parentMedia->mediaId);
-                $layout->backgroundImageId = $parentMedia->mediaId;
-                $layout->save();
-            }
-        }
 
         $this->audit($this->mediaId, 'Deleted', ['mediaId' => $this->mediaId, 'name' => $this->name, 'mediaType' => $this->mediaType, 'fileName' => $this->fileName]);
     }
@@ -750,14 +613,22 @@ class Media implements \JsonSerializable
      */
     private function add()
     {
+        // The originalFileName column has limit of 254 characters
+        // if the filename basename that we are about to save is still over the limit, attempt to strip query string
+        // we cannot make any operations directly on $this->fileName, as that might be still needed to processDownloads
+        $fileName = basename($this->fileName);
+        if (strpos(basename($fileName), '?') && $this->mediaType == 'module') {
+            $fileName = substr(basename($fileName), 0, strpos(basename($fileName), '?'));
+        }
+
         $this->mediaId = $this->getStore()->insert('
-            INSERT INTO `media` (`name`, `type`, duration, originalFilename, userID, retired, moduleSystemFile, released, apiRef, valid, `createdDt`, `modifiedDt`, `enableStat`, `folderId`, `permissionsFolderId`)
-              VALUES (:name, :type, :duration, :originalFileName, :userId, :retired, :moduleSystemFile, :released, :apiRef, :valid, :createdDt, :modifiedDt, :enableStat, :folderId, :permissionsFolderId)
+            INSERT INTO `media` (`name`, `type`, duration, originalFilename, userID, retired, moduleSystemFile, released, apiRef, valid, `createdDt`, `modifiedDt`, `enableStat`, `folderId`, `permissionsFolderId`, `orientation`)
+              VALUES (:name, :type, :duration, :originalFileName, :userId, :retired, :moduleSystemFile, :released, :apiRef, :valid, :createdDt, :modifiedDt, :enableStat, :folderId, :permissionsFolderId, :orientation)
         ', [
             'name' => $this->name,
             'type' => $this->mediaType,
             'duration' => $this->duration,
-            'originalFileName' => basename($this->fileName),
+            'originalFileName' => $fileName,
             'userId' => $this->ownerId,
             'retired' => $this->retired,
             'moduleSystemFile' => (($this->moduleSystemFile) ? 1 : 0),
@@ -768,9 +639,9 @@ class Media implements \JsonSerializable
             'modifiedDt' => Carbon::now()->format(DateFormatHelper::getSystemFormat()),
             'enableStat' => $this->enableStat,
             'folderId' => ($this->folderId === null) ? 1 : $this->folderId,
-            'permissionsFolderId' => ($this->permissionsFolderId == null) ? 1 : $this->permissionsFolderId
+            'permissionsFolderId' => ($this->permissionsFolderId == null) ? 1 : $this->permissionsFolderId,
+            'orientation' => $this->orientation
         ]);
-
     }
 
     /**
@@ -793,7 +664,8 @@ class Media implements \JsonSerializable
                 `enableStat` = :enableStat,
                 expires = :expires,
                 folderId = :folderId,
-                permissionsFolderId = :permissionsFolderId
+                permissionsFolderId = :permissionsFolderId,
+                orientation = :orientation
            WHERE mediaId = :mediaId
         ';
 
@@ -812,7 +684,8 @@ class Media implements \JsonSerializable
             'enableStat' => $this->enableStat,
             'expires' => $this->expires,
             'folderId' => $this->folderId,
-            'permissionsFolderId' => $this->permissionsFolderId
+            'permissionsFolderId' => $this->permissionsFolderId,
+            'orientation' => $this->orientation
         ];
 
         $this->getStore()->update($sql, $params);
@@ -912,31 +785,24 @@ class Media implements \JsonSerializable
         $this->valid = 1;
 
         // Resize image dimensions if threshold exceeds
+        // This also sets orientation
         $this->assessDimensions();
 
-        // If we are saving module file that has ? in the basename, make sure we remove that here and update fileName in database
-        // we cannot do this on queue download, as we need full url as fileName to download it in processDownloads
-        if (strpos(basename($this->fileName), '?') && $this->mediaType == 'module') {
-            $this->fileName = substr(basename($this->fileName), 0, strpos(basename($this->fileName), '?'));
-        }
-
         // Update the MD5 and storedAs to suit
-        $this->getStore()->update('UPDATE `media` SET md5 = :md5, fileSize = :fileSize, storedAs = :storedAs, expires = :expires, released = :released, originalFileName = :originalFileName, valid = 1 WHERE mediaId = :mediaId', [
+        $this->getStore()->update('UPDATE `media` SET md5 = :md5, fileSize = :fileSize, storedAs = :storedAs, expires = :expires, released = :released, orientation = :orientation, valid = 1 WHERE mediaId = :mediaId', [
             'fileSize' => $this->fileSize,
             'md5' => $this->md5,
             'storedAs' => $this->storedAs,
             'expires' => $this->expires,
             'released' => $this->released,
-            'originalFileName' => basename($this->fileName),
+            'orientation' => $this->orientation,
             'mediaId' => $this->mediaId
         ]);
     }
 
     private function assessDimensions()
     {
-
         if ($this->mediaType === 'image' || ($this->mediaType === 'module' && $this->moduleSystemFile === 0)) {
-
             $libraryFolder = $this->config->getSetting('LIBRARY_LOCATION');
             $filePath = $libraryFolder . $this->storedAs;
             list($imgWidth, $imgHeight) = @getimagesize($filePath);
@@ -944,15 +810,15 @@ class Media implements \JsonSerializable
             $resizeThreshold = $this->config->getSetting('DEFAULT_RESIZE_THRESHOLD');
             $resizeLimit = $this->config->getSetting('DEFAULT_RESIZE_LIMIT');
 
+            $this->orientation = ($imgWidth >= $imgHeight) ? 'landscape' : 'portrait';
+
             // Media released set to 0 for large size images
             // if image size is greater than Resize Limit then we flag that image as too big
             if ($resizeLimit > 0 && ($imgWidth > $resizeLimit || $imgHeight > $resizeLimit)) {
                 $this->released = 2;
                 $this->getLog()->debug('Image size is too big. MediaId '. $this->mediaId);
-
             } elseif ($resizeThreshold > 0) {
                 if ($imgWidth > $imgHeight) { // 'landscape';
-
                     if ($imgWidth <= $resizeThreshold) {
                         $this->released = 1;
                     } else {
@@ -962,7 +828,6 @@ class Media implements \JsonSerializable
                         }
                     }
                 } else { // 'portrait';
-
                     if ($imgHeight <= $resizeThreshold) {
                         $this->released = 1;
                     } else {
@@ -973,7 +838,6 @@ class Media implements \JsonSerializable
                     }
                 }
             }
-
         }
     }
 
@@ -1003,7 +867,7 @@ class Media implements \JsonSerializable
     {
         // Make sure storedAs isn't null
         if ($this->storedAs == null) {
-            $this->getLog()->error('Deleting media [%s] with empty stored as. Skipping library file delete.', $this->name);
+            $this->getLog()->error(sprintf('Deleting media [%s] with empty stored as. Skipping library file delete.', $this->name));
             return;
         }
 

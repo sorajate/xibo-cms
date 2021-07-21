@@ -22,8 +22,12 @@
 
 use Monolog\Logger;
 use Nyholm\Psr7\ServerRequest;
+use Psr\Container\ContainerInterface;
 use Slim\Http\ServerRequest as Request;
+use Symfony\Component\EventDispatcher\EventDispatcher;
+use Xibo\Event\DisplayGroupLoadEvent;
 use Xibo\Factory\ContainerFactory;
+use Xibo\Listener\OnDisplayGroupLoad\DisplayGroupDisplayListener;
 use Xibo\Support\Exception\NotFoundException;
 
 define('XIBO', true);
@@ -263,9 +267,24 @@ try {
     $logProcessor = new \Xibo\Xmds\LogProcessor($container->get('logger'), $uidProcessor->getUid());
     $container->get('logger')->pushProcessor($logProcessor);
 
+    $container->set('xmdsDispatcher', function (ContainerInterface $container) {
+        $dispatcher = new EventDispatcher();
+
+        $dispatcher->addListener(DisplayGroupLoadEvent::$NAME, (new DisplayGroupDisplayListener(
+            $container->get('displayFactory')
+        )));
+
+        return $dispatcher;
+    });
+
     // Create a SoapServer
-    $soap = new SoapServer($wsdl);
-    //$soap = new SoapServer($wsdl, array('cache_wsdl' => WSDL_CACHE_NONE));
+    // explicitly define caching.
+    if (\Xibo\Helper\Environment::isDevMode()) {
+        // No cache - our WSDL might change in development
+        $soap = new SoapServer($wsdl, ['cache_wsdl' => WSDL_CACHE_NONE]);
+    } else {
+        $soap = new SoapServer($wsdl, ['cache_wsdl' => WSDL_CACHE_MEMORY]);
+    }
     $soap->setClass('\Xibo\Xmds\Soap' . $version,
         $logProcessor,
         $container->get('pool'),
@@ -288,9 +307,11 @@ try {
         $container->get('displayEventFactory'),
         $container->get('scheduleFactory'),
         $container->get('dayPartFactory'),
-        $container->get('playerVersionFactory')
+        $container->get('playerVersionFactory'),
+        $container->get('xmdsDispatcher')
     );
-    $soap->handle();
+    // Add manual raw post data parsing, as HTTP_RAW_POST_DATA is deprecated.
+    $soap->handle(file_get_contents('php://input'));
 
     // Get the stats for this connection
     $stats = $container->get('store')->stats();
